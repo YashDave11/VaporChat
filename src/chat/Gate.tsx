@@ -4,6 +4,7 @@ import { useGSAP } from "@gsap/react"
 import { Button } from "@/components/ui/button"
 import { LIMITS, type PublicRoomInfo } from "@shared/protocol"
 import type { ChatSession } from "./useChatSession"
+import { rememberedName } from "./useChatSession"
 
 type Channel = "stranger" | "public" | "private" | "join"
 
@@ -18,13 +19,13 @@ const CHANNELS: { id: Channel; freq: string; name: string; desc: string }[] = [
     id: "public",
     freq: "CH·02",
     name: "New open room",
-    desc: "Start a room anyone can find. Ten voices at most.",
+    desc: "Name a room anyone can find. Ten voices at most.",
   },
   {
     id: "private",
     freq: "CH·03",
     name: "New private room",
-    desc: "Mint a four-character key. One conversation, two people.",
+    desc: "Name it, get a four-character key. One conversation, two people.",
   },
   {
     id: "join",
@@ -44,19 +45,28 @@ function freshness(createdAt: number): string {
 }
 
 /**
- * The gate: name yourself (or don't) and pick a channel.
+ * The gate: name yourself and pick a channel. The name is not optional —
+ * every action below the field checks it first and points back here.
  * Same hairline-list language as the landing page's Modes section, with the
  * open-room directory continuing the list below — one instrument, five bands.
  */
 export function Gate({ session }: { session: ChatSession }) {
-  const [name, setName] = useState("")
+  const [name, setName] = useState(rememberedName)
+  const [nameError, setNameError] = useState(false)
   const [key, setKey] = useState("")
-  const [joinOpen, setJoinOpen] = useState(false)
+  const [roomName, setRoomName] = useState("")
+  const [roomNameError, setRoomNameError] = useState(false)
+  /** which channel's inline panel is open (public/private/join) */
+  const [openPanel, setOpenPanel] = useState<Channel | null>(null)
   const keyInputRef = useRef<HTMLInputElement>(null)
+  const roomNameRef = useRef<HTMLInputElement>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
   const ref = useRef<HTMLDivElement>(null)
   const nameFieldId = useId()
   const keyFieldId = useId()
+  const roomNameFieldId = useId()
 
+  const joinOpen = openPanel === "join"
   const badKey =
     session.error &&
     (session.error.code === "BAD_KEY" ||
@@ -88,28 +98,66 @@ export function Gate({ session }: { session: ChatSession }) {
   )
 
   useEffect(() => {
-    if (joinOpen) keyInputRef.current?.focus()
-  }, [joinOpen])
+    if (openPanel === "join") keyInputRef.current?.focus()
+    if (openPanel === "public" || openPanel === "private")
+      roomNameRef.current?.focus()
+  }, [openPanel])
 
-  const enter = (channel: Channel) => {
+  /** the one rule of the gate: no name, no channel */
+  const requireName = (): string | null => {
+    const clean = name.trim()
+    if (!clean) {
+      setNameError(true)
+      nameInputRef.current?.focus()
+      return null
+    }
+    return clean
+  }
+
+  const pick = (channel: Channel) => {
+    const clean = requireName()
+    if (!clean) return
     session.clearError()
-    session.hello(name)
-    if (channel === "stranger") session.joinQueue()
-    else if (channel === "public") session.createPublicRoom()
-    else if (channel === "private") session.createPrivateRoom()
+    if (channel === "stranger") {
+      session.hello(clean)
+      session.joinQueue()
+      return
+    }
+    // create/join channels open their inline panel first
+    setOpenPanel((p) => (p === channel ? null : channel))
+    setRoomNameError(false)
+  }
+
+  const createRoom = (kind: "public" | "private") => {
+    const clean = requireName()
+    if (!clean) return
+    const title = roomName.trim()
+    if (!title) {
+      setRoomNameError(true)
+      roomNameRef.current?.focus()
+      return
+    }
+    session.clearError()
+    session.hello(clean)
+    if (kind === "public") session.createPublicRoom(title)
+    else session.createPrivateRoom(title)
   }
 
   const joinListed = (roomId: string) => {
+    const clean = requireName()
+    if (!clean) return
     session.clearError()
-    session.hello(name)
+    session.hello(clean)
     session.joinPublicRoom(roomId)
   }
 
   const submitKey = () => {
+    const clean = requireName()
+    if (!clean) return
     const k = key.trim().toUpperCase()
     if (k.length !== LIMITS.KEY_LENGTH) return
     session.clearError()
-    session.hello(name)
+    session.hello(clean)
     session.joinPrivateRoom(k)
   }
 
@@ -122,8 +170,7 @@ export function Gate({ session }: { session: ChatSession }) {
         Who&rsquo;s talking?
       </h1>
       <p data-gate-item className="mt-3 text-fog">
-        A name for this conversation only. Leave it blank and we&rsquo;ll find
-        you one.
+        A name for this conversation only. It vaporizes when you do.
       </p>
 
       <div data-gate-item className="mt-8">
@@ -131,120 +178,176 @@ export function Gate({ session }: { session: ChatSession }) {
           htmlFor={nameFieldId}
           className="font-mono text-[11px] uppercase tracking-[0.2em] text-fog-dim"
         >
-          display name
+          display name · required
         </label>
         <input
           id={nameFieldId}
+          ref={nameInputRef}
           type="text"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value)
+            if (nameError && e.target.value.trim()) setNameError(false)
+          }}
           maxLength={LIMITS.NAME_MAX}
-          placeholder="anyone"
+          placeholder="who are you tonight?"
           autoComplete="off"
           spellCheck={false}
-          className="mt-2 block w-full rounded-sm border border-fog/20 bg-smoke/60 px-4 py-3 font-body text-breath placeholder:text-fog-dim outline-none transition-colors duration-300 focus:border-signal/50 focus-visible:ring-2 focus-visible:ring-signal/40"
+          aria-invalid={nameError || undefined}
+          aria-describedby={nameError ? `${nameFieldId}-err` : undefined}
+          className={`mt-2 block w-full rounded-sm border bg-smoke/60 px-4 py-3 font-body text-breath placeholder:text-fog-dim outline-none transition-colors duration-300 focus-visible:ring-2 focus-visible:ring-signal/40 ${
+            nameError
+              ? "border-red-400/40"
+              : "border-fog/20 focus:border-signal/50"
+          }`}
         />
+        {nameError && (
+          <p
+            id={`${nameFieldId}-err`}
+            role="alert"
+            className="mt-2 font-mono text-xs text-red-300/80"
+          >
+            A name first. Any name — it only has to last one conversation.
+          </p>
+        )}
       </div>
 
       <ul data-gate-item className="mt-10 border-t hairline" role="list">
         {CHANNELS.map((c) => (
           <li key={c.id} className="border-b hairline">
-            {c.id === "join" ? (
-              <div>
-                <button
-                  type="button"
-                  aria-expanded={joinOpen}
-                  onClick={() => setJoinOpen((v) => !v)}
-                  className="group grid w-full cursor-pointer grid-cols-[72px_1fr] items-baseline gap-4 py-6 text-left transition-colors duration-500 outline-none hover:bg-smoke/40 focus-visible:bg-smoke/40 sm:grid-cols-[110px_1fr] sm:px-4"
+            <button
+              type="button"
+              aria-expanded={c.id !== "stranger" ? openPanel === c.id : undefined}
+              onClick={() => pick(c.id)}
+              className="group grid w-full cursor-pointer grid-cols-[72px_1fr] items-baseline gap-4 py-6 text-left transition-colors duration-500 outline-none hover:bg-smoke/40 focus-visible:bg-smoke/40 sm:grid-cols-[110px_1fr] sm:px-4"
+            >
+              <span className="font-mono text-xs tracking-[0.25em] text-fog-dim transition-colors duration-500 group-hover:text-signal">
+                {c.freq}
+              </span>
+              <span>
+                <span className="font-display text-xl font-medium text-breath">
+                  {c.name}
+                </span>
+                <span className="mt-1 block text-sm leading-relaxed text-fog">
+                  {c.desc}
+                </span>
+              </span>
+            </button>
+
+            {(c.id === "public" || c.id === "private") &&
+              openPanel === c.id && (
+                <form
+                  className="flex flex-wrap items-end gap-3 pb-6 pl-[88px] sm:pl-[126px] sm:pr-4"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    createRoom(c.id as "public" | "private")
+                  }}
                 >
-                  <span className="font-mono text-xs tracking-[0.25em] text-fog-dim transition-colors duration-500 group-hover:text-signal">
-                    {c.freq}
-                  </span>
-                  <span>
-                    <span className="font-display text-xl font-medium text-breath">
-                      {c.name}
-                    </span>
-                    <span className="mt-1 block text-sm leading-relaxed text-fog">
-                      {c.desc}
-                    </span>
-                  </span>
-                </button>
-                {joinOpen && (
-                  <form
-                    className="flex flex-wrap items-end gap-3 pb-6 pl-[88px] sm:pl-[126px] sm:pr-4"
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      submitKey()
-                    }}
-                  >
-                    <div>
-                      <label htmlFor={keyFieldId} className="sr-only">
-                        Room key, four characters
-                      </label>
-                      <input
-                        id={keyFieldId}
-                        ref={keyInputRef}
-                        type="text"
-                        value={key}
-                        onChange={(e) => {
-                          setKey(
-                            e.target.value
-                              .toUpperCase()
-                              .replace(/[^A-Z0-9]/g, "")
-                              .slice(0, LIMITS.KEY_LENGTH)
-                          )
-                          if (badKey) session.clearError()
-                        }}
-                        placeholder="····"
-                        autoComplete="off"
-                        spellCheck={false}
-                        aria-invalid={badKey ? true : undefined}
-                        aria-describedby={badKey ? `${keyFieldId}-err` : undefined}
-                        className={`w-32 rounded-sm border bg-smoke/60 px-4 py-2.5 text-center font-mono text-lg tracking-[0.5em] text-signal placeholder:text-fog-dim outline-none transition-colors duration-300 focus-visible:ring-2 focus-visible:ring-signal/40 ${
-                          badKey ? "border-red-400/40" : "border-fog/20 focus:border-signal/50"
-                        }`}
-                      />
-                    </div>
-                    <Button
-                      type="submit"
-                      variant="ghost"
-                      size="default"
-                      disabled={key.length !== LIMITS.KEY_LENGTH}
+                  <div className="min-w-0 flex-1 basis-56">
+                    <label
+                      htmlFor={roomNameFieldId}
+                      className="font-mono text-[11px] uppercase tracking-[0.2em] text-fog-dim"
                     >
-                      Join room
-                    </Button>
-                    {badKey && (
-                      <p
-                        id={`${keyFieldId}-err`}
-                        role="alert"
-                        className="w-full font-mono text-xs text-red-300/80"
-                      >
-                        {badKey.code === "ROOM_FULL"
-                          ? badKey.message
-                          : `${badKey.message} Keys die with their rooms.`}
-                      </p>
-                    )}
-                  </form>
-                )}
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => enter(c.id)}
-                className="group grid w-full cursor-pointer grid-cols-[72px_1fr] items-baseline gap-4 py-6 text-left transition-colors duration-500 outline-none hover:bg-smoke/40 focus-visible:bg-smoke/40 sm:grid-cols-[110px_1fr] sm:px-4"
+                      room name · required
+                    </label>
+                    <input
+                      id={roomNameFieldId}
+                      ref={roomNameRef}
+                      type="text"
+                      value={roomName}
+                      onChange={(e) => {
+                        setRoomName(e.target.value)
+                        if (roomNameError && e.target.value.trim())
+                          setRoomNameError(false)
+                      }}
+                      maxLength={LIMITS.ROOM_NAME_MAX}
+                      placeholder={
+                        c.id === "public" ? "what's it about?" : "name it anyway"
+                      }
+                      autoComplete="off"
+                      spellCheck={false}
+                      aria-invalid={roomNameError || undefined}
+                      aria-describedby={
+                        roomNameError ? `${roomNameFieldId}-err` : undefined
+                      }
+                      className={`mt-2 block w-full rounded-sm border bg-smoke/60 px-4 py-2.5 font-body text-breath placeholder:text-fog-dim outline-none transition-colors duration-300 focus-visible:ring-2 focus-visible:ring-signal/40 ${
+                        roomNameError
+                          ? "border-red-400/40"
+                          : "border-fog/20 focus:border-signal/50"
+                      }`}
+                    />
+                  </div>
+                  <Button type="submit" variant="ghost" size="default">
+                    {c.id === "public" ? "Open the room" : "Mint the key"}
+                  </Button>
+                  {roomNameError && (
+                    <p
+                      id={`${roomNameFieldId}-err`}
+                      role="alert"
+                      className="w-full font-mono text-xs text-red-300/80"
+                    >
+                      The room needs a name before it can exist.
+                    </p>
+                  )}
+                </form>
+              )}
+
+            {c.id === "join" && joinOpen && (
+              <form
+                className="flex flex-wrap items-end gap-3 pb-6 pl-[88px] sm:pl-[126px] sm:pr-4"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  submitKey()
+                }}
               >
-                <span className="font-mono text-xs tracking-[0.25em] text-fog-dim transition-colors duration-500 group-hover:text-signal">
-                  {c.freq}
-                </span>
-                <span>
-                  <span className="font-display text-xl font-medium text-breath">
-                    {c.name}
-                  </span>
-                  <span className="mt-1 block text-sm leading-relaxed text-fog">
-                    {c.desc}
-                  </span>
-                </span>
-              </button>
+                <div>
+                  <label htmlFor={keyFieldId} className="sr-only">
+                    Room key, four characters
+                  </label>
+                  <input
+                    id={keyFieldId}
+                    ref={keyInputRef}
+                    type="text"
+                    value={key}
+                    onChange={(e) => {
+                      setKey(
+                        e.target.value
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9]/g, "")
+                          .slice(0, LIMITS.KEY_LENGTH)
+                      )
+                      if (badKey) session.clearError()
+                    }}
+                    placeholder="····"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={badKey ? true : undefined}
+                    aria-describedby={badKey ? `${keyFieldId}-err` : undefined}
+                    className={`w-32 rounded-sm border bg-smoke/60 px-4 py-2.5 text-center font-mono text-lg tracking-[0.5em] text-signal placeholder:text-fog-dim outline-none transition-colors duration-300 focus-visible:ring-2 focus-visible:ring-signal/40 ${
+                      badKey ? "border-red-400/40" : "border-fog/20 focus:border-signal/50"
+                    }`}
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  variant="ghost"
+                  size="default"
+                  disabled={key.length !== LIMITS.KEY_LENGTH}
+                >
+                  Join room
+                </Button>
+                {badKey && (
+                  <p
+                    id={`${keyFieldId}-err`}
+                    role="alert"
+                    className="w-full font-mono text-xs text-red-300/80"
+                  >
+                    {badKey.code === "ROOM_FULL"
+                      ? badKey.message
+                      : `${badKey.message} Keys die with their rooms.`}
+                  </p>
+                )}
+              </form>
             )}
           </li>
         ))}

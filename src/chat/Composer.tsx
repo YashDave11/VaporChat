@@ -14,18 +14,55 @@ export const Composer = memo(function Composer({
   replyTo,
   onCancelReply,
   onSend,
+  onTyping,
   errorText,
   onClearError,
 }: {
   replyTo: ReplyRef | null
   onCancelReply: () => void
   onSend: (text: string, replyTo?: ReplyRef) => void
+  onTyping: (active: boolean) => void
   errorText: string | null
   onClearError: () => void
 }) {
   const [text, setText] = useState("")
   const [emojiOpen, setEmojiOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // typing signal: start once, refresh quietly, stop on idle/send/empty.
+  // refs so keystrokes never allocate new closures for the socket layer
+  const typingRef = useRef<{ active: boolean; idle?: ReturnType<typeof setTimeout> }>({
+    active: false,
+  })
+
+  const stopTyping = useCallback(() => {
+    const t = typingRef.current
+    clearTimeout(t.idle)
+    if (t.active) {
+      t.active = false
+      onTyping(false)
+    }
+  }, [onTyping])
+
+  const noteTyping = useCallback(
+    (hasText: boolean) => {
+      const t = typingRef.current
+      if (!hasText) {
+        stopTyping()
+        return
+      }
+      if (!t.active) {
+        t.active = true
+        onTyping(true)
+      }
+      clearTimeout(t.idle)
+      // pause → the signal fades on its own before the peer's TTL does
+      t.idle = setTimeout(stopTyping, 2000)
+    },
+    [onTyping, stopTyping]
+  )
+
+  // leaving the room mid-thought must not strand an active signal
+  useEffect(() => stopTyping, [stopTyping])
 
   // an armed reply pulls focus into the line
   useEffect(() => {
@@ -43,6 +80,7 @@ export const Composer = memo(function Composer({
   const send = () => {
     const body = text.trim()
     if (!body) return
+    stopTyping() // the message itself is the signal now
     onSend(body, replyTo ?? undefined)
     setText("")
     setEmojiOpen(false)
@@ -137,7 +175,9 @@ export const Composer = memo(function Composer({
           rows={1}
           value={text}
           onChange={(e) => {
-            setText(e.target.value.slice(0, LIMITS.MESSAGE_MAX))
+            const next = e.target.value.slice(0, LIMITS.MESSAGE_MAX)
+            setText(next)
+            noteTyping(next.trim().length > 0)
             if (errorText) onClearError()
             autosize()
           }}

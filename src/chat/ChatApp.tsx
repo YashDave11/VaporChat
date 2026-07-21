@@ -39,16 +39,31 @@ export function ChatApp() {
         {view === "gate" && <Gate session={session} />}
         {view === "matching" && <Matching onCancel={session.cancelQueue} />}
         {view === "room" && <Room session={session} />}
-        {view === "closed" && (
-          <Closed reason={session.stage.view === "closed" ? session.stage.reason : ""} onBack={session.backToGate} />
+        {view === "ended" && session.stage.view === "ended" && (
+          <Ended
+            reason={session.stage.reason}
+            by={session.stage.by}
+            selfName={session.name}
+            onBack={session.backToGate}
+          />
         )}
       </main>
     </div>
   )
 }
 
-/** the moment after: a room existed, and now it doesn't */
-function Closed({ reason, onBack }: { reason: string; onBack: () => void }) {
+/** the moment after: a room existed, and now it doesn't — for everyone */
+function Ended({
+  reason,
+  by,
+  selfName,
+  onBack,
+}: {
+  reason: string
+  by?: string
+  selfName: string | null
+  onBack: () => void
+}) {
   const ref = useRef<HTMLDivElement>(null)
 
   useGSAP(
@@ -68,6 +83,12 @@ function Closed({ reason, onBack }: { reason: string; onBack: () => void }) {
     { scope: ref }
   )
 
+  const byLine = by
+    ? by === selfName
+      ? "You ended it. Clean exit."
+      : `${by} ended it. Nothing lingers.`
+    : null
+
   return (
     <div
       ref={ref}
@@ -81,7 +102,7 @@ function Closed({ reason, onBack }: { reason: string; onBack: () => void }) {
         <span className="ghost-word">Gone.</span>
       </p>
       <p data-closed-line className="mt-3 text-fog">
-        {reason}
+        {byLine ?? reason}
       </p>
       <div data-closed-line className="mt-10">
         <Button onClick={onBack}>Talk to someone else</Button>

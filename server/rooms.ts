@@ -1,16 +1,28 @@
 import { randomUUID } from "node:crypto"
-import type { RoomKind, PublicRoomInfo } from "../shared/protocol.ts"
+import type { RoomKind, PublicRoomInfo, PeerInfo, PeerStatus } from "../shared/protocol.ts"
 import { LIMITS } from "../shared/protocol.ts"
-import { roomTitle } from "./names.ts"
 
 /**
  * In-memory room engine. Everything lives in these Maps and nowhere else —
- * when a room empties it is deleted, and a process restart forgets the world.
+ * when a room empties or ends it is deleted, and a process restart forgets
+ * the world.
  *
- * Socket.IO's own room structure is transport only. This registry is the
- * source of truth, and the directory projection below is the ONLY thing a
- * client ever learns about rooms it isn't in.
+ * A member is a *seat*, not a socket: the seat has a stable id and a resume
+ * token, so a refresh or a network blip can reclaim it inside the grace
+ * window. Socket.IO's own room structure is transport only; this registry
+ * is the source of truth.
  */
+
+export interface Member {
+  /** stable seat id — survives socket swaps */
+  id: string
+  name: string
+  /** current transport, or null while the member is away */
+  socketId: string | null
+  status: PeerStatus
+  /** secret that lets a new socket reclaim this seat */
+  resumeToken: string
+}
 
 export interface Room {
   id: string
@@ -19,15 +31,17 @@ export interface Room {
   createdAt: number
   /** private rooms only */
   key?: string
-  /** public rooms only — server-assigned, never user input */
+  /** creator-chosen name — public and private rooms */
   title?: string
-  /** socketId → display name */
-  members: Map<string, string>
+  /** memberId → seat */
+  members: Map<string, Member>
 }
 
 const rooms = new Map<string, Room>()
 /** key → roomId for private-room joins */
 const privateKeys = new Map<string, string>()
+/** resumeToken → { roomId, memberId } for seat reclaim */
+const resumeTokens = new Map<string, { roomId: string; memberId: string }>()
 
 // glyphs avoid ambiguous 0/O, 1/I/L, 8/B — a key you can read aloud once
 const KEY_GLYPHS = "ACDEFHJKMNPRTVWXYZ234679"
@@ -62,20 +76,20 @@ export function createStrangerRoom(): Room {
   return room
 }
 
-export function createPublicRoom(): Room {
+export function createPublicRoom(title: string): Room {
   const room: Room = {
     id: `g-${randomUUID().slice(0, 8)}`,
     kind: "public",
     capacity: LIMITS.PUBLIC_CAP,
     createdAt: Date.now(),
-    title: roomTitle(),
+    title,
     members: new Map(),
   }
   rooms.set(room.id, room)
   return room
 }
 
-export function createPrivateRoom(): Room {
+export function createPrivateRoom(title: string): Room {
   const key = mintKey()
   const room: Room = {
     id: `p-${randomUUID().slice(0, 8)}`,
@@ -83,6 +97,7 @@ export function createPrivateRoom(): Room {
     capacity: LIMITS.PRIVATE_CAP,
     createdAt: Date.now(),
     key,
+    title,
     members: new Map(),
   }
   rooms.set(room.id, room)
@@ -114,21 +129,72 @@ export function publicDirectory(): PublicRoomInfo[] {
   return list.sort((a, b) => b.createdAt - a.createdAt)
 }
 
-export function addMember(room: Room, socketId: string, name: string): void {
-  room.members.set(socketId, name)
+/** the room as everyone sees it — names and presence, nothing secret */
+export function presenceSnapshot(room: Room): PeerInfo[] {
+  return [...room.members.values()].map((m) => ({
+    id: m.id,
+    name: m.name,
+    status: m.status,
+  }))
+}
+
+export function addMember(room: Room, socketId: string, name: string): Member {
+  const member: Member = {
+    id: `m-${randomUUID().slice(0, 8)}`,
+    name,
+    socketId,
+    status: "active",
+    resumeToken: randomUUID(),
+  }
+  room.members.set(member.id, member)
+  resumeTokens.set(member.resumeToken, { roomId: room.id, memberId: member.id })
+  return member
+}
+
+export function findMemberBySocket(
+  room: Room,
+  socketId: string
+): Member | undefined {
+  for (const m of room.members.values()) {
+    if (m.socketId === socketId) return m
+  }
+  return undefined
+}
+
+/** look a seat up by its resume token — undefined once the seat is gone */
+export function findResumable(
+  token: string
+): { room: Room; member: Member } | undefined {
+  const ref = resumeTokens.get(token)
+  if (!ref) return undefined
+  const room = rooms.get(ref.roomId)
+  const member = room?.members.get(ref.memberId)
+  if (!room || !member) {
+    resumeTokens.delete(token)
+    return undefined
+  }
+  return { room, member }
 }
 
 /**
- * Remove a member; if the room empties, vaporize it — public rooms fall out
+ * Remove a seat; if the room empties, vaporize it — public rooms fall out
  * of the directory, private keys die with their rooms.
  * Returns true if the room was deleted.
  */
-export function removeMember(room: Room, socketId: string): boolean {
-  room.members.delete(socketId)
+export function removeMember(room: Room, memberId: string): boolean {
+  const member = room.members.get(memberId)
+  if (member) resumeTokens.delete(member.resumeToken)
+  room.members.delete(memberId)
   if (room.members.size === 0) {
-    rooms.delete(room.id)
-    if (room.key) privateKeys.delete(room.key)
+    deleteRoom(room)
     return true
   }
   return false
+}
+
+/** authoritative teardown: registry, private key, and every resume token */
+export function deleteRoom(room: Room): void {
+  for (const m of room.members.values()) resumeTokens.delete(m.resumeToken)
+  rooms.delete(room.id)
+  if (room.key) privateKeys.delete(room.key)
 }
