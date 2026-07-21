@@ -10,10 +10,12 @@ import { sanitizeName } from "./names.ts"
 import {
   type Room,
   getRoom,
-  ensureLobby,
+  isFull,
   createStrangerRoom,
+  createPublicRoom,
   createPrivateRoom,
   findPrivateRoom,
+  publicDirectory,
   addMember,
   removeMember,
 } from "./rooms.ts"
@@ -33,6 +35,12 @@ interface Session {
 const sessions = new Map<string, Session>()
 /** waiting queue for stranger matching (socket ids, FIFO) */
 const queue: string[] = []
+
+/**
+ * Socket.IO room used purely as a broadcast channel for directory watchers.
+ * It is NOT a chat room and never appears in any registry.
+ */
+const DIRECTORY_CHANNEL = "watch:directory"
 
 function fail(socket: Sock, code: ErrorCode, message: string): void {
   socket.emit("app:error", { code, message })
@@ -55,6 +63,13 @@ function dropFromQueue(socketId: string): void {
   if (i !== -1) queue.splice(i, 1)
 }
 
+/** push the fresh public directory to everyone watching the gate */
+function broadcastDirectory(io: IO): void {
+  io.to(DIRECTORY_CHANNEL).emit("directory:update", {
+    rooms: publicDirectory(),
+  })
+}
+
 /** put a socket into a room and notify everyone involved */
 function enterRoom(io: IO, socket: Sock, s: Session, room: Room): void {
   const peers = [...room.members.values()]
@@ -64,11 +79,14 @@ function enterRoom(io: IO, socket: Sock, s: Session, room: Room): void {
   socket.emit("room:joined", {
     roomId: room.id,
     kind: room.kind,
+    capacity: room.capacity,
     key: room.key,
+    title: room.title,
     peers,
     name: s.name,
   })
   socket.to(room.id).emit("room:peer_joined", { name: s.name })
+  if (room.kind === "public") broadcastDirectory(io)
 }
 
 /** pull a socket out of its room; vaporize the room if it empties */
@@ -80,7 +98,7 @@ function exitRoom(io: IO, socket: Sock, s: Session): void {
   removeMember(room, socket.id)
   socket.leave(room.id)
   socket.to(room.id).emit("room:peer_left", { name: s.name })
-  // a stranger room can't be rejoined — close it for whoever remains
+  // a stranger pairing can't be rejoined — close it for whoever remains
   if (room.kind === "stranger" && room.members.size > 0) {
     io.to(room.id).emit("room:closed", { reason: "They left. It's gone." })
     for (const memberId of room.members.keys()) {
@@ -91,6 +109,7 @@ function exitRoom(io: IO, socket: Sock, s: Session): void {
       removeMember(room, memberId)
     }
   }
+  if (room.kind === "public") broadcastDirectory(io)
 }
 
 export function registerHandlers(io: IO): void {
@@ -105,6 +124,19 @@ export function registerHandlers(io: IO): void {
       })
       socket.emit("session:ready", { name: clean })
     })
+
+    // ---- directory (gate room browser) ----
+
+    socket.on("directory:subscribe", () => {
+      socket.join(DIRECTORY_CHANNEL)
+      socket.emit("directory:update", { rooms: publicDirectory() })
+    })
+
+    socket.on("directory:unsubscribe", () => {
+      socket.leave(DIRECTORY_CHANNEL)
+    })
+
+    // ---- stranger matching ----
 
     socket.on("queue:join", () => {
       const s = sessions.get(socket.id)
@@ -139,15 +171,34 @@ export function registerHandlers(io: IO): void {
       dropFromQueue(socket.id)
     })
 
-    socket.on("lobby:join", () => {
+    // ---- public rooms ----
+
+    socket.on("public:create", () => {
       const s = sessions.get(socket.id)
       if (!s) return fail(socket, "NO_SESSION", "Say hello first.")
       exitRoom(io, socket, s)
       dropFromQueue(socket.id)
-      enterRoom(io, socket, s, ensureLobby())
+      enterRoom(io, socket, s, createPublicRoom())
     })
 
-    socket.on("room:create", () => {
+    socket.on("public:join", ({ roomId }) => {
+      const s = sessions.get(socket.id)
+      if (!s) return fail(socket, "NO_SESSION", "Say hello first.")
+      const room = getRoom(String(roomId ?? ""))
+      if (!room || room.kind !== "public") {
+        return fail(socket, "ROOM_GONE", "That room already vaporized.")
+      }
+      if (isFull(room)) {
+        return fail(socket, "ROOM_FULL", "That room is at ten voices.")
+      }
+      exitRoom(io, socket, s)
+      dropFromQueue(socket.id)
+      enterRoom(io, socket, s, room)
+    })
+
+    // ---- private rooms ----
+
+    socket.on("private:create", () => {
       const s = sessions.get(socket.id)
       if (!s) return fail(socket, "NO_SESSION", "Say hello first.")
       exitRoom(io, socket, s)
@@ -155,19 +206,24 @@ export function registerHandlers(io: IO): void {
       enterRoom(io, socket, s, createPrivateRoom())
     })
 
-    socket.on("room:join", ({ key }) => {
+    socket.on("private:join", ({ key }) => {
       const s = sessions.get(socket.id)
       if (!s) return fail(socket, "NO_SESSION", "Say hello first.")
       const room = findPrivateRoom(String(key ?? ""))
       if (!room) {
         return fail(socket, "BAD_KEY", "No room answers to that key.")
       }
+      if (isFull(room)) {
+        return fail(socket, "ROOM_FULL", "That room is already a conversation.")
+      }
       exitRoom(io, socket, s)
       dropFromQueue(socket.id)
       enterRoom(io, socket, s, room)
     })
 
-    socket.on("room:message", ({ text }) => {
+    // ---- messaging ----
+
+    socket.on("room:message", ({ text, replyTo }) => {
       const s = sessions.get(socket.id)
       if (!s) return fail(socket, "NO_SESSION", "Say hello first.")
       if (!s.roomId || !getRoom(s.roomId)) {
@@ -185,11 +241,22 @@ export function registerHandlers(io: IO): void {
       if (!takeToken(s)) {
         return fail(socket, "RATE_LIMITED", "Slow down. Let it breathe.")
       }
+      // sanitize the quoted reply — clamp every field, never trust the client
+      let quote: { id: string; from: string; excerpt: string } | undefined
+      if (replyTo && typeof replyTo === "object") {
+        quote = {
+          id: String(replyTo.id ?? "").slice(0, 64),
+          from: String(replyTo.from ?? "").slice(0, LIMITS.NAME_MAX),
+          excerpt: String(replyTo.excerpt ?? "").slice(0, LIMITS.EXCERPT_MAX),
+        }
+        if (!quote.id || !quote.excerpt) quote = undefined
+      }
       const msg = {
         id: randomUUID(),
         from: s.name,
         text: body,
         ts: Date.now(),
+        replyTo: quote,
       }
       // echo to author with self=true; broadcast to the rest with self=false
       socket.emit("room:message", { ...msg, self: true })

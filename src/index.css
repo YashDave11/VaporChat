@@ -91,6 +91,52 @@ body {
   }
 }
 
+/* ---- quote navigation: the original message catches the light briefly ---- */
+.quote-flash {
+  animation: quote-flash 1.3s var(--ease-fog) both;
+}
+@keyframes quote-flash {
+  0% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-signal) 70%, transparent),
+      0 0 24px color-mix(in srgb, var(--color-signal) 25%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 1px transparent, 0 0 0 transparent;
+  }
+}
+
+/* ---- jump-to-latest pill: condenses in from below ---- */
+.pill-in {
+  animation: pill-in 0.35s var(--ease-fog) both;
+}
+@keyframes pill-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    filter: blur(0);
+  }
+}
+
+/* ---- reply preview: rises above the composer ---- */
+.reply-in {
+  animation: reply-in 0.3s var(--ease-fog) both;
+}
+@keyframes reply-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ---- presence dot pulse ---- */
 .presence {
   position: relative;
@@ -119,7 +165,14 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .blink,
   .presence::after,
-  .msg-in {
+  .msg-in,
+  .quote-flash,
+  .pill-in,
+  .reply-in {
     animation: none;
+  }
+  .quote-flash {
+    /* still mark the found message, just without motion */
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-signal) 50%, transparent);
   }
 }

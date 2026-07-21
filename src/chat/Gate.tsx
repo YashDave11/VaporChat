@@ -2,10 +2,10 @@ import { useState, useRef, useEffect, useId } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import { Button } from "@/components/ui/button"
-import { LIMITS } from "@shared/protocol"
+import { LIMITS, type PublicRoomInfo } from "@shared/protocol"
 import type { ChatSession } from "./useChatSession"
 
-type Channel = "stranger" | "lobby" | "create" | "join"
+type Channel = "stranger" | "public" | "private" | "join"
 
 const CHANNELS: { id: Channel; freq: string; name: string; desc: string }[] = [
   {
@@ -15,16 +15,16 @@ const CHANNELS: { id: Channel; freq: string; name: string; desc: string }[] = [
     desc: "Pair with someone, somewhere. No profile, no follow button.",
   },
   {
-    id: "lobby",
+    id: "public",
     freq: "CH·02",
-    name: "Lobby",
-    desc: "The open room. Voices come and go, nobody keeps a list.",
+    name: "New open room",
+    desc: "Start a room anyone can find. Ten voices at most.",
   },
   {
-    id: "create",
+    id: "private",
     freq: "CH·03",
     name: "New private room",
-    desc: "Mint a four-character key. Share it with someone you trust.",
+    desc: "Mint a four-character key. One conversation, two people.",
   },
   {
     id: "join",
@@ -34,9 +34,19 @@ const CHANNELS: { id: Channel; freq: string; name: string; desc: string }[] = [
   },
 ]
 
+/** "moments ago" freshness — precise enough for rooms that live minutes */
+function freshness(createdAt: number): string {
+  const mins = Math.floor((Date.now() - createdAt) / 60_000)
+  if (mins < 1) return "just formed"
+  if (mins === 1) return "1 min"
+  if (mins < 60) return `${mins} min`
+  return `${Math.floor(mins / 60)} h`
+}
+
 /**
  * The gate: name yourself (or don't) and pick a channel.
- * Same hairline-list language as the landing page's Modes section.
+ * Same hairline-list language as the landing page's Modes section, with the
+ * open-room directory continuing the list below — one instrument, five bands.
  */
 export function Gate({ session }: { session: ChatSession }) {
   const [name, setName] = useState("")
@@ -47,7 +57,18 @@ export function Gate({ session }: { session: ChatSession }) {
   const nameFieldId = useId()
   const keyFieldId = useId()
 
-  const badKey = session.error?.code === "BAD_KEY" ? session.error : null
+  const badKey =
+    session.error &&
+    (session.error.code === "BAD_KEY" ||
+      (session.error.code === "ROOM_FULL" && joinOpen))
+      ? session.error
+      : null
+  const directoryError =
+    session.error &&
+    (session.error.code === "ROOM_GONE" ||
+      (session.error.code === "ROOM_FULL" && !joinOpen))
+      ? session.error
+      : null
 
   useGSAP(
     () => {
@@ -74,8 +95,14 @@ export function Gate({ session }: { session: ChatSession }) {
     session.clearError()
     session.hello(name)
     if (channel === "stranger") session.joinQueue()
-    else if (channel === "lobby") session.joinLobby()
-    else if (channel === "create") session.createRoom()
+    else if (channel === "public") session.createPublicRoom()
+    else if (channel === "private") session.createPrivateRoom()
+  }
+
+  const joinListed = (roomId: string) => {
+    session.clearError()
+    session.hello(name)
+    session.joinPublicRoom(roomId)
   }
 
   const submitKey = () => {
@@ -83,7 +110,7 @@ export function Gate({ session }: { session: ChatSession }) {
     if (k.length !== LIMITS.KEY_LENGTH) return
     session.clearError()
     session.hello(name)
-    session.joinRoom(k)
+    session.joinPrivateRoom(k)
   }
 
   return (
@@ -192,7 +219,9 @@ export function Gate({ session }: { session: ChatSession }) {
                         role="alert"
                         className="w-full font-mono text-xs text-red-300/80"
                       >
-                        {badKey.message} Keys die with their rooms.
+                        {badKey.code === "ROOM_FULL"
+                          ? badKey.message
+                          : `${badKey.message} Keys die with their rooms.`}
                       </p>
                     )}
                   </form>
@@ -221,9 +250,111 @@ export function Gate({ session }: { session: ChatSession }) {
         ))}
       </ul>
 
+      <Directory
+        rooms={session.directory}
+        error={directoryError?.message ?? null}
+        onJoin={joinListed}
+      />
+
       <p data-gate-item className="mt-8 font-mono text-[11px] text-fog-dim">
         no account · no history · nothing leaves this session
       </p>
     </div>
+  )
+}
+
+/**
+ * The open-room directory: rooms that exist right now and stop existing when
+ * their last voice leaves. A signal meter per room, not a server browser.
+ */
+function Directory({
+  rooms,
+  error,
+  onJoin,
+}: {
+  rooms: PublicRoomInfo[]
+  error: string | null
+  onJoin: (roomId: string) => void
+}) {
+  return (
+    <section data-gate-item className="mt-10" aria-label="Open rooms">
+      <div className="flex items-baseline justify-between">
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.2em] text-fog-dim">
+          open rooms · live
+        </h2>
+        {rooms.length > 0 && (
+          <span className="font-mono text-[11px] text-fog-dim">
+            {rooms.length} on air
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <p role="alert" className="mt-3 font-mono text-xs text-red-300/80">
+          {error}
+        </p>
+      )}
+
+      {rooms.length === 0 ? (
+        <p className="mt-4 border-t hairline pt-5 pb-2 font-mono text-xs leading-relaxed text-fog-dim">
+          nothing on air right now.
+          <span className="text-fog"> start an open room</span> and it will
+          appear here until the last person leaves.
+        </p>
+      ) : (
+        <ul className="mt-4 border-t hairline" role="list">
+          {rooms.map((room) => {
+            const full = room.count >= room.capacity
+            return (
+              <li key={room.id} className="border-b hairline">
+                <button
+                  type="button"
+                  onClick={() => onJoin(room.id)}
+                  disabled={full}
+                  className="group flex w-full cursor-pointer items-center gap-4 py-4 text-left transition-colors duration-500 outline-none hover:bg-smoke/40 focus-visible:bg-smoke/40 disabled:cursor-default disabled:hover:bg-transparent sm:px-4"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="flex h-3 items-end gap-[3px]"
+                  >
+                    {Array.from({ length: room.capacity }, (_, i) => (
+                      <span
+                        key={i}
+                        className={`w-[3px] rounded-full transition-colors duration-500 ${
+                          i < room.count
+                            ? "h-3 bg-signal/80"
+                            : "h-1.5 bg-fog/20"
+                        }`}
+                      />
+                    ))}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={`block truncate font-display text-base font-medium ${
+                        full ? "text-fog-dim" : "text-breath"
+                      }`}
+                    >
+                      {room.title}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-fog-dim">
+                    {room.count}/{room.capacity} · {freshness(room.createdAt)}
+                  </span>
+                  <span
+                    className={`shrink-0 font-mono text-[11px] transition-colors duration-500 ${
+                      full
+                        ? "text-fog-dim"
+                        : "text-fog group-hover:text-signal"
+                    }`}
+                  >
+                    {full ? "full" : "join →"}
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
   )
 }

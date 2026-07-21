@@ -58,7 +58,7 @@ export function Preview() {
             id="preview-title"
             className="font-display text-3xl font-semibold tracking-tight text-breath sm:text-4xl"
           >
-            Tonight, in the lobby.
+            Tonight, in an open room.
           </h2>
           <p className="mt-4 max-w-md leading-relaxed text-fog">
             No feed, no profiles, no scroll of the past. A room is only ever
@@ -81,7 +81,7 @@ export function Preview() {
                     strokeWidth="1"
                   />
                 </svg>
-                vapor.chat/lobby
+                vapor.chat/low·static
               </div>
               <div className="flex items-center gap-2 font-mono text-[10px] text-fog-dim">
                 <span className="presence h-1 w-1 rounded-full bg-signal" />
@@ -98,7 +98,7 @@ export function Preview() {
                 </p>
                 {[
                   ["stranger", false],
-                  ["lobby", true],
+                  ["low static · 4/10", true],
                   ["room · K7XQ", false],
                 ].map(([name, active]) => (
                   <div

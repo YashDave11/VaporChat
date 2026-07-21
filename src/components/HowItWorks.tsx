@@ -51,7 +51,7 @@ export function HowItWorks() {
                   a stranger
                 </div>
                 <div className="rounded-sm border border-transparent px-3.5 py-2 font-mono text-xs text-fog-dim">
-                  the lobby
+                  an open room
                 </div>
                 <div className="rounded-sm border border-transparent px-3.5 py-2 font-mono text-xs text-fog-dim">
                   room · <span className="tracking-[0.2em]">····</span>
@@ -60,7 +60,7 @@ export function HowItWorks() {
             </div>
             <p className="max-w-xs text-sm leading-relaxed text-fog">
               <span className="text-breath">Choose a channel.</span> A
-              stranger, the lobby, or a room with a 4-character key.
+              stranger, an open room, or a private one with a 4-character key.
             </p>
           </div>
 

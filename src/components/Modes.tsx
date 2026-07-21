@@ -15,15 +15,15 @@ const MODES = [
   },
   {
     freq: "CH·02",
-    name: "Lobby",
-    desc: "An open room that anyone can drift through. Voices come and go. Nobody keeps a list of who was there.",
-    meta: "you ↔ whoever's around",
+    name: "Open room",
+    desc: "Start a room anyone can find, or join one that's on air. Ten voices at most, and it vanishes when the last one leaves.",
+    meta: "you ↔ up to nine others",
   },
   {
     freq: "CH·03",
     name: "Private room",
-    desc: "Four characters. Share them with someone you trust, talk, and let the key die with the room.",
-    meta: "you ↔ people with the key",
+    desc: "Four characters. Share them with one person you trust, talk, and let the key die with the room.",
+    meta: "you ↔ one with the key",
   },
 ] as const
 

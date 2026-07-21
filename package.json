@@ -4,8 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -n web,api -c blue,green \"vite\" \"tsx watch server/index.ts\"",
+    "dev:web": "vite",
     "dev:server": "tsx watch server/index.ts",
+    "test:smoke": "tsx server/smoke.test.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -33,6 +35,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.134.0",
     "@vitejs/plugin-react": "^6.0.3",
+    "concurrently": "^10.0.3",
     "oxlint": "^1.71.0",
     "tsx": "^4.23.1",
     "typescript": "~6.0.2",

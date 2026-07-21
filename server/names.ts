@@ -16,6 +16,27 @@ export function anonymousName(): string {
   return `${base}·${n}`
 }
 
+/**
+ * Server-assigned public room titles. Two quiet words — atmospheric, never
+ * user input, so the directory can't be used as a billboard.
+ */
+
+const TITLE_A = [
+  "low", "still", "grey", "half", "late", "thin", "pale", "slow",
+  "quiet", "small", "cold", "soft",
+] as const
+
+const TITLE_B = [
+  "static", "signal", "window", "hour", "orbit", "current", "weather",
+  "harbor", "channel", "frequency", "tide", "room",
+] as const
+
+export function roomTitle(): string {
+  const a = TITLE_A[Math.floor(Math.random() * TITLE_A.length)]
+  const b = TITLE_B[Math.floor(Math.random() * TITLE_B.length)]
+  return `${a} ${b}`
+}
+
 /** strip control chars, collapse whitespace, clamp length */
 export function sanitizeName(raw: string, max: number): string {
   const cleaned = raw
