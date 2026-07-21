@@ -9,12 +9,34 @@ function inviteUrl(token: string): string {
   return `${window.location.origin}${window.location.pathname}#/join/${token}`
 }
 
+/** the panel's words per room kind — stated once, no branching in the JSX */
+const SHARE_COPY: Record<
+  string,
+  { eyebrow: string; title: string; body: string }
+> = {
+  private: {
+    eyebrow: "invite by link or key",
+    title: "One seat. One link.",
+    body: "Whoever opens this joins you — and the link dies when the chat does.",
+  },
+  "private-group": {
+    eyebrow: "invite by link or key",
+    title: "Your circle. Your door.",
+    body: "Hidden from open rooms — only the link or the key gets someone in. Up to ten voices.",
+  },
+  public: {
+    eyebrow: "invite by link",
+    title: "Bring someone in.",
+    body: "Anyone with this link can step into the room while it's on air.",
+  },
+}
+
 /**
  * The invite surface: a veil and one small panel, same materials as the
- * vaporize confirm. It holds exactly one idea — "hand someone this link" —
- * with the copy action as the hero and the native share sheet one step
- * behind it. Private rooms also show the spoken key: the link is for
- * sending, the key is for saying out loud.
+ * vaporize confirm. It holds exactly one idea — "hand someone this room" —
+ * with the copy actions as the hero and the native share sheet one step
+ * behind them. Keyed rooms also show the spoken key with its own copy:
+ * the link is for sending, the key is for saying out loud.
  */
 export function SharePanel({
   room,
@@ -25,13 +47,14 @@ export function SharePanel({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const copyRef = useRef<HTMLButtonElement>(null)
-  /** context-safe copied-feedback pulse, installed by useGSAP below */
-  const pulseRef = useRef<(() => void) | null>(null)
-  const [copied, setCopied] = useState(false)
+  /** context-safe copied-feedback pulses, installed by useGSAP below */
+  const pulseRef = useRef<((target: string) => void) | null>(null)
+  const [copied, setCopied] = useState<"link" | "key" | null>(null)
   const url = inviteUrl(room.invite ?? "")
   // strip the scheme for display — the link reads like an address, not code
   const shownUrl = url.replace(/^https?:\/\//, "")
   const canShare = typeof navigator.share === "function"
+  const words = SHARE_COPY[room.kind] ?? SHARE_COPY.public
 
   useGSAP(
     (_ctx, contextSafe) => {
@@ -46,11 +69,11 @@ export function SharePanel({
           ease: "power3.out",
         })
       })
-      // copied feedback: the link line exhales once — quiet confirmation
-      const pulse = contextSafe?.(() => {
+      // copied feedback: the copied line exhales once — quiet confirmation
+      const pulse = contextSafe?.((target: string) => {
         if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
         gsap.fromTo(
-          "[data-link-line]",
+          target,
           { boxShadow: "0 0 0 1px var(--color-signal)" },
           {
             boxShadow: "0 0 0 1px transparent",
@@ -67,13 +90,25 @@ export function SharePanel({
   const copyLink = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(url)
-      setCopied(true)
-      pulseRef.current?.()
-      setTimeout(() => setCopied(false), 1800)
+      setCopied("link")
+      pulseRef.current?.("[data-link-line]")
+      setTimeout(() => setCopied(null), 1800)
     } catch {
       /* clipboard unavailable — the link is on screen to select by hand */
     }
   }, [url])
+
+  const copyKey = useCallback(async () => {
+    if (!room.key) return
+    try {
+      await navigator.clipboard.writeText(room.key)
+      setCopied("key")
+      pulseRef.current?.("[data-key-line]")
+      setTimeout(() => setCopied(null), 1800)
+    } catch {
+      /* clipboard unavailable — the key is on screen to say out loud */
+    }
+  }, [room.key])
 
   const shareLink = useCallback(() => {
     navigator
@@ -117,21 +152,21 @@ export function SharePanel({
         className="relative w-full max-w-sm rounded-sm border border-fog/20 bg-smoke/95 p-6 shadow-[var(--shadow-panel)] backdrop-blur"
       >
         <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-signal/80">
-          invite by link
+          {words.eyebrow}
         </p>
         <p
           id="share-title"
           className="mt-2 font-display text-xl font-semibold tracking-tight text-breath"
         >
-          {room.kind === "private"
-            ? "One seat. One link."
-            : "Bring someone in."}
+          {words.title}
         </p>
-        <p className="mt-2 text-sm leading-relaxed text-fog">
-          {room.kind === "private"
-            ? "Whoever opens this joins you — and the link dies when the chat does."
-            : "Anyone with this link can step into the room while it's on air."}
-        </p>
+        {room.title && (
+          <p className="mt-1 font-mono text-xs text-fog-dim">
+            {room.title} ·{" "}
+            {room.kind === "public" ? "visible in open rooms" : "hidden from open rooms"}
+          </p>
+        )}
+        <p className="mt-2 text-sm leading-relaxed text-fog">{words.body}</p>
 
         {/* the link itself: visible, selectable, never precious */}
         <div
@@ -144,7 +179,7 @@ export function SharePanel({
           <span
             aria-live="polite"
             className={`shrink-0 font-mono text-[10px] uppercase tracking-[0.15em] transition-colors duration-300 ${
-              copied ? "text-signal" : "text-transparent"
+              copied === "link" ? "text-signal" : "text-transparent"
             }`}
           >
             copied
@@ -153,7 +188,7 @@ export function SharePanel({
 
         <div className="mt-4 flex items-center gap-3">
           <Button ref={copyRef} size="sm" onClick={copyLink} className="flex-1">
-            {copied ? "Copied" : "Copy link"}
+            {copied === "link" ? "Copied" : "Copy Link"}
           </Button>
           {canShare && (
             <Button variant="ghost" size="sm" onClick={shareLink} className="flex-1">
@@ -163,11 +198,28 @@ export function SharePanel({
         </div>
 
         {room.key && (
-          <p className="mt-5 border-t hairline pt-4 font-mono text-[11px] text-fog-dim">
-            or say it out loud:{" "}
-            <span className="tracking-[0.3em] text-signal">{room.key}</span>
-            <span className="ml-1.5">— the key works at the gate</span>
-          </p>
+          <div
+            data-key-line
+            className="mt-5 flex items-center gap-3 rounded-sm border border-fog/20 bg-void/40 px-3 py-2"
+          >
+            <span className="min-w-0 flex-1 font-mono text-[11px] text-fog-dim">
+              or say it out loud:{" "}
+              <span className="tracking-[0.3em] text-signal select-all">
+                {room.key}
+              </span>
+            </span>
+            <span
+              aria-live="polite"
+              className={`shrink-0 font-mono text-[10px] uppercase tracking-[0.15em] transition-colors duration-300 ${
+                copied === "key" ? "text-signal" : "text-transparent"
+              }`}
+            >
+              copied
+            </span>
+            <Button variant="ghost" size="sm" onClick={copyKey}>
+              {copied === "key" ? "Copied" : "Copy Key"}
+            </Button>
+          </div>
         )}
 
         <button

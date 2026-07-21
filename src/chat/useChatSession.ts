@@ -10,6 +10,7 @@ import type {
   CandidateGoneReason,
   InviteInfo,
   InviteDeadReason,
+  HostedRoomKind,
 } from "@shared/protocol"
 import { LIMITS } from "@shared/protocol"
 import { getSocket } from "./socket"
@@ -501,20 +502,19 @@ export function useChatSession() {
     getSocket().emit("queue:decline")
     dispatch({ type: "declined" })
   }, [])
-  const createPublicRoom = useCallback(
-    (roomName: string) => getSocket().emit("public:create", { roomName }),
+  /** host a room — kind decides visibility, capacity, key, and link */
+  const createRoom = useCallback(
+    (kind: HostedRoomKind, roomName: string) =>
+      getSocket().emit("room:create", { kind, roomName }),
     []
   )
   const joinPublicRoom = useCallback(
     (roomId: string) => getSocket().emit("public:join", { roomId }),
     []
   )
-  const createPrivateRoom = useCallback(
-    (roomName: string) => getSocket().emit("private:create", { roomName }),
-    []
-  )
-  const joinPrivateRoom = useCallback(
-    (key: string) => getSocket().emit("private:join", { key }),
+  /** a key opens whichever keyed room minted it — 1v1 chat or private group */
+  const joinByKey = useCallback(
+    (key: string) => getSocket().emit("key:join", { key }),
     []
   )
   /** name yourself on the doorstep and walk in — one gesture, one event pair */
@@ -562,10 +562,9 @@ export function useChatSession() {
     cancelQueue,
     acceptCandidate,
     declineCandidate,
-    createPublicRoom,
+    createRoom,
     joinPublicRoom,
-    createPrivateRoom,
-    joinPrivateRoom,
+    joinByKey,
     acceptInvite,
     declineInvite,
     sendMessage,

@@ -16,6 +16,7 @@ export const LIMITS = {
   INVITE_LENGTH: 10,
   /** hard capacity per room kind */
   PUBLIC_CAP: 10,
+  PRIVATE_GROUP_CAP: 10,
   PRIVATE_CAP: 2,
   STRANGER_CAP: 2,
   /** token-bucket rate limit: burst size and refill per second */
@@ -33,26 +34,34 @@ export const LIMITS = {
   TYPING_TTL_MS: 3000,
 } as const
 
-export type RoomKind = "stranger" | "public" | "private"
+export type RoomKind = "stranger" | "public" | "private" | "private-group"
 
 /**
- * The room model, stated once. Three kinds, three rule sets:
- *  - stranger: random-matched 1v1 — begins only after both sides say yes —
- *              invisible, dies with either side
- *  - public:   discoverable group room, lives until the last voice leaves
- *  - private:  key-joined 1v1 chat, invisible, dies with either side
+ * The room model, stated once. Four kinds, four rule sets:
+ *  - stranger:      random-matched 1v1 — begins only after both sides say
+ *                   yes — invisible, dies with either side
+ *  - public:        discoverable group room, lives until the last voice leaves
+ *  - private:       key-joined 1v1 chat, invisible, dies with either side
+ *  - private-group: keyed group room — public capacity, private visibility;
+ *                   joined by link or key only, lives until the last voice leaves
  * `oneToOne` is what decides vaporize semantics — end for both vs leave alone.
  * `shareable` is what decides invite links — a stranger match is a consented
  * pairing with no address; nothing about it can be pointed at, so no link.
+ * `keyed` is what decides join keys — every invisible hosted room mints one,
+ * so "join with a key" opens whatever the key holder was given.
  */
 export const ROOM_RULES = {
-  stranger: { capacity: LIMITS.STRANGER_CAP, discoverable: false, oneToOne: true, shareable: false },
-  public: { capacity: LIMITS.PUBLIC_CAP, discoverable: true, oneToOne: false, shareable: true },
-  private: { capacity: LIMITS.PRIVATE_CAP, discoverable: false, oneToOne: true, shareable: true },
+  stranger: { capacity: LIMITS.STRANGER_CAP, discoverable: false, oneToOne: true, shareable: false, keyed: false },
+  public: { capacity: LIMITS.PUBLIC_CAP, discoverable: true, oneToOne: false, shareable: true, keyed: false },
+  private: { capacity: LIMITS.PRIVATE_CAP, discoverable: false, oneToOne: true, shareable: true, keyed: true },
+  "private-group": { capacity: LIMITS.PRIVATE_GROUP_CAP, discoverable: false, oneToOne: false, shareable: true, keyed: true },
 } as const satisfies Record<
   RoomKind,
-  { capacity: number; discoverable: boolean; oneToOne: boolean; shareable: boolean }
+  { capacity: number; discoverable: boolean; oneToOne: boolean; shareable: boolean; keyed: boolean }
 >
+
+/** the kinds a person can host from the gate — everything but a stranger match */
+export type HostedRoomKind = Exclude<RoomKind, "stranger">
 
 /** why a room ended — the ended screen reads differently for each */
 export type EndCause = "vaporized" | "left" | "disconnected"
@@ -142,7 +151,7 @@ export interface RoomJoined {
   roomId: string
   kind: RoomKind
   capacity: number
-  /** present only for private rooms */
+  /** present only for keyed rooms — private 1v1 and private group */
   key?: string
   /** shareable rooms carry their invite token — the base of the join link */
   invite?: string
@@ -177,10 +186,11 @@ export interface ClientToServer {
   "queue:decline": () => void
   "directory:subscribe": () => void
   "directory:unsubscribe": () => void
-  "public:create": (p: { roomName: string }) => void
+  /** host a room of any hosted kind — ROOM_RULES supplies everything else */
+  "room:create": (p: { kind: HostedRoomKind; roomName: string }) => void
   "public:join": (p: { roomId: string }) => void
-  "private:create": (p: { roomName: string }) => void
-  "private:join": (p: { key: string }) => void
+  /** join by key — opens whichever keyed room (1v1 or group) minted it */
+  "key:join": (p: { key: string }) => void
   /** look up what a shared link points at — no name or session needed */
   "invite:resolve": (p: { token: string }) => void
   /** walk through the door the link opened — requires a named session */

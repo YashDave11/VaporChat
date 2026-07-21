@@ -182,16 +182,18 @@ export const MessageList = memo(function MessageList({
   )
 })
 
+/** the alone-in-here line per kind — each room's own kind of quiet */
+const ALONE_LINE: Record<RoomKind, string> = {
+  private: "empty room. share the key — it only works while you're here",
+  "private-group": "no one here yet. the link and key are the only doors in",
+  stranger: "they're connecting…",
+  public: "this room is on air. anyone at the gate can find it now",
+}
+
 function EmptyState({ alone, kind }: { alone: boolean; kind: RoomKind }) {
   return (
     <p className="py-10 text-center font-mono text-xs text-fog-dim">
-      {alone
-        ? kind === "private"
-          ? "empty room. share the key — it only works while you're here"
-          : kind === "stranger"
-            ? "they're connecting…"
-            : "this room is on air. anyone at the gate can find it now"
-        : "nothing said yet. nothing will be kept"}
+      {alone ? ALONE_LINE[kind] : "nothing said yet. nothing will be kept"}
     </p>
   )
 }

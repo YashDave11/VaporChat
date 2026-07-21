@@ -101,10 +101,13 @@ function Doorstep({
     { scope: ref }
   )
 
+  const group = info.kind === "public" || info.kind === "private-group"
   const kindLine =
     info.kind === "private"
       ? "a private chat · one to one"
-      : `an open room · ${info.count} ${info.count === 1 ? "voice" : "voices"} inside`
+      : info.kind === "private-group"
+        ? `a private room · ${info.count} ${info.count === 1 ? "voice" : "voices"} inside`
+        : `an open room · ${info.count} ${info.count === 1 ? "voice" : "voices"} inside`
 
   const enter = () => {
     const clean = name.trim()
@@ -137,7 +140,7 @@ function Doorstep({
       </h1>
       <p data-door-line className="mt-3 font-mono text-xs text-fog-dim">
         {kindLine}
-        {info.kind === "public" && (
+        {group && (
           <> · {info.count}/{info.capacity} seats</>
         )}
       </p>

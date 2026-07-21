@@ -3,6 +3,7 @@ import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import { Button } from "@/components/ui/button"
 import { LIMITS } from "@shared/protocol"
+import type { HostedRoomKind } from "@shared/protocol"
 import type { ChatSession } from "./useChatSession"
 import { rememberedName } from "./useChatSession"
 import { RoomBrowser } from "./RoomBrowser"
@@ -32,13 +33,48 @@ const CHANNELS: { id: Channel; freq: string; name: string; desc: string }[] = [
     id: "create",
     freq: "CH·03",
     name: "Create a Room",
-    desc: "Host a conversation — open to anyone, or private behind a key.",
+    desc: "Host a conversation — open to anyone, private for a group, or one-to-one behind a key.",
   },
   {
     id: "key",
     freq: "CH·04",
     name: "Join with a Key",
-    desc: "Someone gave you four characters. Their private chat opens here.",
+    desc: "Someone gave you four characters. Their private room opens here.",
+  },
+]
+
+/**
+ * The create panel's three hosted kinds, stated once — kind, label, hint,
+ * placeholder, and the verb on the button. No conditionals downstream: the
+ * selected entry carries everything the form needs.
+ */
+const CREATE_OPTIONS: {
+  kind: HostedRoomKind
+  label: string
+  hint: string
+  placeholder: string
+  action: string
+}[] = [
+  {
+    kind: "public",
+    label: "Public group",
+    hint: "visible in open rooms · anyone can join · up to ten",
+    placeholder: "what's it about?",
+    action: "Create Public Room",
+  },
+  {
+    kind: "private-group",
+    label: "Private group",
+    hint: "hidden from open rooms · join by link or key · up to ten",
+    placeholder: "name your circle",
+    action: "Create Private Room",
+  },
+  {
+    kind: "private",
+    label: "Private chat",
+    hint: "one-to-one · join by link or key",
+    placeholder: "name this conversation",
+    action: "Create Private Chat",
   },
 ]
 
@@ -53,8 +89,10 @@ export function Gate({ session }: { session: ChatSession }) {
   const [key, setKey] = useState("")
   const [roomName, setRoomName] = useState("")
   const [roomNameError, setRoomNameError] = useState(false)
-  /** create-panel choice: discoverable room or keyed private chat */
-  const [createKind, setCreateKind] = useState<"public" | "private">("public")
+  /** create-panel choice — one of the three hosted kinds */
+  const [createKind, setCreateKind] = useState<HostedRoomKind>("public")
+  const createOption =
+    CREATE_OPTIONS.find((o) => o.kind === createKind) ?? CREATE_OPTIONS[0]
   const [openPanel, setOpenPanel] = useState<Channel | null>(null)
   /** the room board — a surface over the gate, not a panel inside it */
   const [browsing, setBrowsing] = useState(false)
@@ -146,8 +184,7 @@ export function Gate({ session }: { session: ChatSession }) {
     }
     session.clearError()
     session.hello(clean)
-    if (createKind === "public") session.createPublicRoom(title)
-    else session.createPrivateRoom(title)
+    session.createRoom(createKind, title)
   }
 
   const joinListed = (roomId: string) => {
@@ -169,7 +206,7 @@ export function Gate({ session }: { session: ChatSession }) {
     if (k.length !== LIMITS.KEY_LENGTH) return
     session.clearError()
     session.hello(clean)
-    session.joinPrivateRoom(k)
+    session.joinByKey(k)
   }
 
   const onAir = session.directory.length
@@ -267,26 +304,13 @@ export function Gate({ session }: { session: ChatSession }) {
                   createRoom()
                 }}
               >
-                {/* kind selector: two quiet radio lines, not tabs, not cards */}
+                {/* kind selector: three quiet radio lines, not tabs, not cards */}
                 <fieldset>
                   <legend className="font-mono text-[11px] uppercase tracking-[0.2em] text-fog-dim">
                     what kind?
                   </legend>
                   <div className="mt-2 flex flex-col gap-1.5">
-                    {(
-                      [
-                        {
-                          kind: "public",
-                          label: "Open room",
-                          hint: "anyone can find it · up to ten voices",
-                        },
-                        {
-                          kind: "private",
-                          label: "Private chat",
-                          hint: "one-to-one · joined by key only",
-                        },
-                      ] as const
-                    ).map((o) => (
+                    {CREATE_OPTIONS.map((o) => (
                       <label
                         key={o.kind}
                         className={`flex cursor-pointer items-baseline gap-3 rounded-sm border px-3.5 py-2.5 transition-colors duration-300 ${
@@ -339,11 +363,7 @@ export function Gate({ session }: { session: ChatSession }) {
                           setRoomNameError(false)
                       }}
                       maxLength={LIMITS.ROOM_NAME_MAX}
-                      placeholder={
-                        createKind === "public"
-                          ? "what's it about?"
-                          : "name this conversation"
-                      }
+                      placeholder={createOption.placeholder}
                       autoComplete="off"
                       spellCheck={false}
                       aria-invalid={roomNameError || undefined}
@@ -358,7 +378,7 @@ export function Gate({ session }: { session: ChatSession }) {
                     />
                   </div>
                   <Button type="submit" variant="ghost" size="default">
-                    {createKind === "public" ? "Open the room" : "Mint the key"}
+                    {createOption.action}
                   </Button>
                   {roomNameError && (
                     <p

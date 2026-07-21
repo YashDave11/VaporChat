@@ -27,7 +27,11 @@ export function Room({ session }: { session: ChatSession }) {
   const ref = useRef<HTMLDivElement>(null)
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [shareOpen, setShareOpen] = useState(false)
+  // a freshly created private group opens on its own invite panel — the
+  // link and key ARE the success state; there is no other way anyone arrives
+  const [shareOpen, setShareOpen] = useState(
+    () => room?.kind === "private-group" && room.peers.length === 0
+  )
   /** true while the exit animation is dissolving the panel */
   const leavingRef = useRef(false)
 
@@ -145,11 +149,10 @@ export function Room({ session }: { session: ChatSession }) {
 
 /** presence summary for the header — one quiet phrase, never a banner */
 function presencePhrase(room: RoomJoined, peers: PeerInfo[]): string {
-  const active = peers.filter((p) => p.status === "active").length
-  const away = peers.length - active
-
-  if (room.kind === "public") {
+  if (!ROOM_RULES[room.kind].oneToOne) {
     if (peers.length === 0) return "just you, on air"
+    const active = peers.filter((p) => p.status === "active").length
+    const away = peers.length - active
     const base = `${active + 1} active`
     return away > 0 ? `${base} · ${away} away` : base
   }
@@ -157,6 +160,14 @@ function presencePhrase(room: RoomJoined, peers: PeerInfo[]): string {
   if (peers.length === 0)
     return room.kind === "private" ? "waiting" : "connecting"
   return peers[0].status === "active" ? "with you now" : "connection lost…"
+}
+
+/** the header eyebrow per kind — stated once, like ROOM_RULES */
+const KIND_LABEL: Record<RoomJoined["kind"], string> = {
+  stranger: "stranger · 1 to 1",
+  public: "open room",
+  private: "private chat · 1 to 1",
+  "private-group": "private room · link or key",
 }
 
 /** context bar: kind eyebrow · title · live presence · invite · vaporize */
@@ -171,12 +182,8 @@ function ChatHeader({
   onVaporize: () => void
   onShare: () => void
 }) {
-  const kindLabel =
-    room.kind === "stranger"
-      ? "stranger · 1 to 1"
-      : room.kind === "public"
-        ? "open room"
-        : "private chat · 1 to 1"
+  const kindLabel = KIND_LABEL[room.kind]
+  const group = !ROOM_RULES[room.kind].oneToOne && room.kind !== "stranger"
 
   const title = room.kind === "stranger" ? "a stranger" : (room.title ?? "room")
 
@@ -203,7 +210,7 @@ function ChatHeader({
             {title}
             <span className="text-fog-dim">
               {" "}· {presencePhrase(room, peers)}
-              {room.kind === "public" && (
+              {group && (
                 <> · {peers.length + 1}/{room.capacity}</>
               )}
             </span>

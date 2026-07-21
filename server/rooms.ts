@@ -31,7 +31,7 @@ export interface Room {
   createdAt: number
   /** display name of whoever opened the room — "" for matched strangers */
   createdBy: string
-  /** private rooms only */
+  /** keyed rooms only — private 1v1 and private group */
   key?: string
   /** shareable rooms only — the token their join link carries */
   invite?: string
@@ -42,8 +42,8 @@ export interface Room {
 }
 
 const rooms = new Map<string, Room>()
-/** key → roomId for private-room joins */
-const privateKeys = new Map<string, string>()
+/** key → roomId for keyed-room joins (private 1v1 and private group) */
+const joinKeys = new Map<string, string>()
 /** invite token → roomId for link joins */
 const inviteTokens = new Map<string, string>()
 /** resumeToken → { roomId, memberId } for seat reclaim */
@@ -63,7 +63,7 @@ function mintGlyphs(length: number): string {
 function mintKey(): string {
   for (;;) {
     const key = mintGlyphs(LIMITS.KEY_LENGTH)
-    if (!privateKeys.has(key)) return key
+    if (!joinKeys.has(key)) return key
   }
 }
 
@@ -86,13 +86,18 @@ export function isFull(room: Room): boolean {
   return room.members.size >= room.capacity
 }
 
-/** id prefixes keep room kinds legible in logs: s-, g-, p- */
-const KIND_PREFIX = { stranger: "s", public: "g", private: "p" } as const
+/** id prefixes keep room kinds legible in logs: s-, g-, p-, pg- */
+const KIND_PREFIX = {
+  stranger: "s",
+  public: "g",
+  private: "p",
+  "private-group": "pg",
+} as const
 
 /**
- * The one constructor. ROOM_RULES supplies capacity; private rooms mint
- * their key here, shareable rooms mint their invite token here — neither
- * can ever exist without its room.
+ * The one constructor. ROOM_RULES supplies capacity; keyed rooms mint their
+ * key here, shareable rooms mint their invite token here — neither can ever
+ * exist without its room.
  */
 export function createRoom(
   kind: RoomKind,
@@ -107,9 +112,9 @@ export function createRoom(
     title: opts.title,
     members: new Map(),
   }
-  if (kind === "private") {
+  if (ROOM_RULES[kind].keyed) {
     room.key = mintKey()
-    privateKeys.set(room.key, room.id)
+    joinKeys.set(room.key, room.id)
   }
   if (ROOM_RULES[kind].shareable) {
     room.invite = mintInvite()
@@ -119,8 +124,9 @@ export function createRoom(
   return room
 }
 
-export function findPrivateRoom(key: string): Room | undefined {
-  const roomId = privateKeys.get(key.toUpperCase())
+/** the room a join key opens — private 1v1 or private group, key decides */
+export function findKeyedRoom(key: string): Room | undefined {
+  const roomId = joinKeys.get(key.toUpperCase())
   return roomId ? rooms.get(roomId) : undefined
 }
 
@@ -198,7 +204,7 @@ export function findResumable(
 
 /**
  * Remove a seat; if the room empties, vaporize it — public rooms fall out
- * of the directory, private keys die with their rooms.
+ * of the directory, join keys die with their rooms.
  * Returns true if the room was deleted.
  */
 export function removeMember(room: Room, memberId: string): boolean {
@@ -212,10 +218,10 @@ export function removeMember(room: Room, memberId: string): boolean {
   return false
 }
 
-/** authoritative teardown: registry, private key, invite, every resume token */
+/** authoritative teardown: registry, join key, invite, every resume token */
 export function deleteRoom(room: Room): void {
   for (const m of room.members.values()) resumeTokens.delete(m.resumeToken)
   rooms.delete(room.id)
-  if (room.key) privateKeys.delete(room.key)
+  if (room.key) joinKeys.delete(room.key)
   if (room.invite) inviteTokens.delete(room.invite)
 }
