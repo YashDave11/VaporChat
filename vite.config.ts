@@ -20,4 +20,10 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // three.js (lazy-loaded for the Vanta landing background) is one large
+    // module by nature and already off the critical path — raise the warning
+    // threshold just past it instead of pretending it can be split.
+    chunkSizeWarningLimit: 650,
+  },
 })

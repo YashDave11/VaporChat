@@ -10,12 +10,17 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // Primary: pale signal surface, dark text — the one bright thing on the page
+        // Primary: the signal surface with void text — the one bright thing at
+        // night, the one deep thing by day (tokens swap: mint→teal, void→mist)
         signal:
-          "rounded-sm bg-signal text-void hover:bg-breath hover:shadow-[0_0_32px_rgba(169,232,220,0.25)]",
+          "rounded-sm bg-signal text-void hover:bg-breath hover:shadow-[var(--glow-signal)]",
         // Secondary: hairline ghost
         ghost:
           "rounded-sm border border-fog/25 bg-transparent text-breath hover:border-fog/60 hover:bg-smoke",
+        // Destructive: ember hairline — red stated quietly, never a fire alarm.
+        // Hover warms the border and casts a faint heat glow; press dims it.
+        danger:
+          "rounded-sm border border-ember/30 bg-transparent text-ember hover:border-ember/60 hover:bg-ember/[0.06] hover:shadow-[var(--glow-ember)] active:bg-ember/[0.12] active:shadow-none focus-visible:ring-ember/50",
         // Tertiary: bare text link
         bare: "text-fog hover:text-breath",
       },

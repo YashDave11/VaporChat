@@ -154,7 +154,7 @@ export function Hero() {
                 size="lg"
                 onClick={() => (window.location.hash = "#/chat")}
               >
-                Create private room
+                Start a private chat
               </Button>
             </div>
           </div>

@@ -1,12 +1,15 @@
 /**
  * End-to-end smoke test against the real server. Sequential scenario:
  *  1. mandatory names: blank display name and blank room names rejected
- *  2. stranger matching + message echo/broadcast + typing relay
- *  3. stranger leave → room:ended for the peer (1-to-1 semantics)
- *  4. end-chat: either side ends a private room for both, key dies
- *  5. public room: named creation, directory update, join, step-out vs end
- *  6. presence: disconnect → away after grace; resume reclaims the seat
- *  7. rate limiting + overlong messages
+ *  2. stranger matching: live count, double consent, decline + no-rematch,
+ *     rename re-eligibility, accept → room + message echo/broadcast + typing
+ *  3. stranger vaporize → room:ended (cause "vaporized") for the peer
+ *  4. private 1v1 chat: named create, key join, vaporize ends for both
+ *  5. public room: named creation, directory, group vaporize = leave only
+ *  6. invite links: minted per shareable room, resolve to safe metadata,
+ *     join through the token, dead/full links answered gracefully
+ *  7. presence: disconnect → away after grace; resume reclaims the seat
+ *  8. rate limiting + overlong messages
  */
 // own port so the test never collides with a running dev server
 process.env.PORT = "3101"
@@ -21,11 +24,11 @@ function ok(cond: boolean, label: string) {
   if (!cond) failures++
 }
 
-function connect(name: string): Promise<Socket> {
+function connect(name: string, clientId?: string): Promise<Socket> {
   return new Promise((resolve) => {
     const s = ioc(url)
     s.on("connect", () => {
-      s.emit("session:hello", { name })
+      s.emit("session:hello", { name, clientId })
       s.on("session:ready", () => resolve(s))
     })
   })
@@ -41,6 +44,20 @@ function once<T>(s: Socket, event: string, timeoutMs = 6000): Promise<T> {
       clearTimeout(t)
       resolve(p)
     })
+  })
+}
+
+/** resolves true only if the event does NOT arrive within the window */
+function silence(s: Socket, event: string, windowMs = 800): Promise<boolean> {
+  return new Promise((resolve) => {
+    const done = (quiet: boolean) => {
+      clearTimeout(t)
+      s.off(event, onEvent)
+      resolve(quiet)
+    }
+    const t = setTimeout(() => done(true), windowMs)
+    const onEvent = () => done(false)
+    s.on(event, onEvent)
   })
 }
 
@@ -77,15 +94,88 @@ async function main() {
     "blank private room name rejected"
   )
 
-  // ---- 2. stranger matching + typing ----
+  // ---- 2. stranger double-consent matching ----
+
+  // dedicated pair for the consent lifecycle — stable per-tab client ids
+  const d1 = await connect("nora", "cid-n")
+  const d2 = await connect("owen", "cid-o")
+
+  const d1Count = once<any>(d1, "queue:count")
+  d1.emit("queue:join")
+  await once(d1, "queue:waiting")
+  ok((await d1Count).count === 1, "first seeker sees a live count of 1")
+
+  const d1Cand = once<any>(d1, "queue:candidate")
+  const d2Cand = once<any>(d2, "queue:candidate")
+  const d1Count2 = once<any>(d1, "queue:count")
+  d2.emit("queue:join")
+  ok((await d1Count2).count === 2, "count updates live when a second seeker arrives")
+  const [c1, c2] = await Promise.all([d1Cand, d2Cand])
+  ok(
+    c1.name === "owen" && c2.name === "nora",
+    "both sides shown a named candidate, no room yet"
+  )
+
+  // one yes is not enough — the other side just learns about it
+  const d2Peer = once<any>(d2, "queue:peer_accepted")
+  d1.emit("queue:accept")
+  ok((await d2Peer).name === "nora", "single accept only notifies the other side")
+
+  // a decline dissolves the pairing: the other side is told, the decliner
+  // already knows (their client transitions locally, no echo)
+  const d1Gone = once<any>(d1, "queue:candidate_gone")
+  const d2Quiet = silence(d2, "queue:candidate_gone")
+  d2.emit("queue:decline")
+  ok(
+    (await d1Gone).reason === "declined",
+    "decline returns the other side to searching"
+  )
+  ok(await d2Quiet, "decliner gets no echo of their own no")
+  ok(
+    await silence(d1, "queue:candidate"),
+    "declined pair is not immediately rematched"
+  )
+
+  // a new display name is a new identity — eligible again
+  const d1Cand2 = once<any>(d1, "queue:candidate")
+  const d2Cand2 = once<any>(d2, "queue:candidate")
+  d2.emit("session:hello", { name: "wren", clientId: "cid-o" })
+  await once(d2, "session:ready")
+  d2.emit("queue:join")
+  const [c3, c4] = await Promise.all([d1Cand2, d2Cand2])
+  ok(
+    c3.name === "wren" && c4.name === "nora",
+    "renamed identity becomes matchable again"
+  )
+
+  // both accept → the pairing becomes a stranger room
+  const d1Room = once<any>(d1, "room:joined")
+  const d2Room = once<any>(d2, "room:joined")
+  d1.emit("queue:accept")
+  d2.emit("queue:accept")
+  const [dr1, dr2] = await Promise.all([d1Room, d2Room])
+  ok(
+    dr1.kind === "stranger" && dr1.roomId === dr2.roomId,
+    "double accept starts one shared stranger room"
+  )
+  d1.disconnect()
+  d2.disconnect()
+
+  // ---- 2b. matched strangers: messaging + typing ----
   const aJoined = once<any>(a, "room:joined")
   const bJoined = once<any>(b, "room:joined")
+  const aCand = once<any>(a, "queue:candidate")
+  const bCand = once<any>(b, "queue:candidate")
   a.emit("queue:join")
   await once(a, "queue:waiting")
   b.emit("queue:join")
+  await Promise.all([aCand, bCand])
+  a.emit("queue:accept")
+  b.emit("queue:accept")
   const [ar, br] = await Promise.all([aJoined, bJoined])
   ok(ar.kind === "stranger" && br.kind === "stranger", "stranger rooms match")
   ok(ar.roomId === br.roomId, "both strangers share one room")
+  ok(ar.invite === undefined, "a stranger match has no invite — nothing to point at")
   ok(br.peers.length === 1 && br.peers[0].status === "active", "second joiner sees one active peer")
   ok(typeof ar.resumeToken === "string" && ar.resumeToken.length > 0, "join grants a resume token")
 
@@ -121,13 +211,13 @@ async function main() {
   })
   ok((await aReply2).replyTo === undefined, "malformed reply ref dropped")
 
-  // ---- 3. stranger leave ends the room for the peer ----
+  // ---- 3. stranger vaporize ends the room for the peer ----
   const bEnded = once<any>(b, "room:ended")
-  a.emit("room:leave")
+  a.emit("room:vaporize")
   const ended = await bEnded
   ok(
-    typeof ended.reason === "string" && ended.by === undefined,
-    "stranger leave ends room for peer (no 'by' — it was a leave)"
+    ended.cause === "vaporized" && ended.by === "alice",
+    "stranger vaporize ends room for peer, naming who and why"
   )
 
   // ---- 4. private rooms: named, keyed, end-chat for both ----
@@ -153,12 +243,15 @@ async function main() {
   c.emit("private:join", { key: priv.key })
   ok((await cFull).code === "ROOM_FULL", "third joiner rejected from private room")
 
-  // b ends it → both sides get room:ended naming b
+  // b vaporizes → both sides get room:ended naming b, cause vaporized
   const aEnded = once<any>(a, "room:ended")
   const bEnded2 = once<any>(b, "room:ended")
-  b.emit("room:end")
+  b.emit("room:vaporize")
   const [ea, eb] = await Promise.all([aEnded, bEnded2])
-  ok(ea.by === "bram" && eb.by === "bram", "end-chat names who ended it, for everyone")
+  ok(
+    ea.by === "bram" && eb.by === "bram" && ea.cause === "vaporized",
+    "private 1v1 vaporize ends it for both, naming who"
+  )
 
   const deadKey = once<any>(c, "app:error")
   c.emit("private:join", { key: priv.key })
@@ -189,20 +282,18 @@ async function main() {
   b.emit("public:join", { roomId: pub.roomId })
   ok((await bPub).roomId === pub.roomId, "public room joinable by id from directory")
 
-  // step-out (leave) in a public room only removes that member
+  // group vaporize only removes the vaporizer — the room lives on
   const cPub = once<any>(c, "room:joined")
   c.emit("public:join", { roomId: pub.roomId })
   await cPub
   const bSeesLeave = once<any>(b, "room:peer_left")
-  c.emit("room:leave")
-  ok((await bSeesLeave).name === "carol", "leaving a public room does not end it")
+  c.emit("room:vaporize")
+  ok(
+    (await bSeesLeave).name === "carol",
+    "vaporizing out of a public room does not end it"
+  )
 
-  // end-chat in a public room ends it for every remaining voice
-  const aPubEnded = once<any>(a, "room:ended")
-  const bPubEnded = once<any>(b, "room:ended")
-  b.emit("room:end")
-  const [pa, pb] = await Promise.all([aPubEnded, bPubEnded])
-  ok(pa.by === "bram" && pb.by === "bram", "public end-chat reaches all members")
+  // the room is destroyed only when the last voice vaporizes out
   const dirAfterEnd = await new Promise<boolean>((resolve) => {
     const t = setTimeout(() => resolve(false), 3000)
     const listener = (p: any) => {
@@ -214,14 +305,101 @@ async function main() {
     }
     c.on("directory:update", listener)
     c.emit("directory:subscribe")
+    a.emit("room:vaporize")
+    b.emit("room:vaporize")
   })
-  ok(dirAfterEnd, "ended public room removed from directory")
+  ok(dirAfterEnd, "public room removed from directory when last member leaves")
 
   const goneErr = once<any>(c, "app:error")
   c.emit("public:join", { roomId: "g-nonsense" })
   ok((await goneErr).code === "ROOM_GONE", "joining a dead room id fails cleanly")
 
-  // ---- 6. presence grace + resume ----
+  // ---- 6. invite links ----
+
+  // shareable rooms carry a token; matched strangers never do
+  const invJoined = once<any>(a, "room:joined")
+  a.emit("private:create", { roomName: "back channel" })
+  const invRoom = await invJoined
+  ok(
+    typeof invRoom.invite === "string" && invRoom.invite.length === 10,
+    "private room minted with a 10-glyph invite token"
+  )
+
+  // resolving needs no session — the doorstep is public, the room id is not
+  const doorstep = ioc(url)
+  await once(doorstep, "connect")
+  const info = once<any>(doorstep, "invite:info")
+  doorstep.emit("invite:resolve", { token: invRoom.invite.toLowerCase() })
+  const inf = await info
+  ok(
+    inf.token === invRoom.invite && inf.kind === "private" && inf.title === "back channel",
+    "invite resolves case-insensitively to doorstep metadata"
+  )
+  ok(
+    Object.keys(inf).sort().join(",") === "capacity,count,kind,title,token",
+    "invite info exposes only safe metadata — never the room id"
+  )
+
+  // a junk token is a dead link, not an app error
+  const junkInvite = once<any>(doorstep, "invite:dead")
+  doorstep.emit("invite:resolve", { token: "ZZZZZZZZZZ" })
+  ok((await junkInvite).reason === "gone", "unknown invite token answers gone")
+
+  // joining through the link requires a name, like every other door
+  const inviteNoName = once<any>(doorstep, "app:error")
+  doorstep.emit("invite:join", { token: invRoom.invite })
+  ok(
+    (await inviteNoName).code === "NAME_REQUIRED",
+    "invite join without a session rejected"
+  )
+
+  // named, the token opens the room
+  doorstep.emit("session:hello", { name: "dana" })
+  await once(doorstep, "session:ready")
+  const doorJoined = once<any>(doorstep, "room:joined")
+  doorstep.emit("invite:join", { token: invRoom.invite })
+  const dj = await doorJoined
+  ok(dj.roomId === invRoom.roomId, "invite token joins the correct room")
+  ok(dj.invite === invRoom.invite, "joiner receives the room's invite token")
+
+  // the room is now a full 1v1 — the same link answers full, not an error
+  const fullInvite = once<any>(c, "invite:dead")
+  c.emit("invite:resolve", { token: invRoom.invite })
+  ok((await fullInvite).reason === "full", "invite to a full room answers full")
+  const fullInviteJoin = once<any>(c, "invite:dead")
+  c.emit("invite:join", { token: invRoom.invite })
+  ok(
+    (await fullInviteJoin).reason === "full",
+    "join through a full invite also answers full"
+  )
+
+  // links die with their rooms
+  const invEnded = once<any>(a, "room:ended")
+  doorstep.emit("room:vaporize")
+  await invEnded
+  const deadInvite = once<any>(c, "invite:dead")
+  c.emit("invite:resolve", { token: invRoom.invite })
+  ok(
+    (await deadInvite).reason === "gone",
+    "invite dies when its room vaporizes"
+  )
+  doorstep.disconnect()
+
+  // public rooms carry invites too, resolving with a live seat count
+  const pubInvJoined = once<any>(a, "room:joined")
+  a.emit("public:create", { roomName: "late shift" })
+  const pubInv = await pubInvJoined
+  ok(typeof pubInv.invite === "string", "public room minted with an invite")
+  const pubInfo = once<any>(c, "invite:info")
+  c.emit("invite:resolve", { token: pubInv.invite })
+  const pi = await pubInfo
+  ok(
+    pi.kind === "public" && pi.count === 1 && pi.capacity === 10,
+    "public invite doorstep carries kind and live seat count"
+  )
+  a.emit("room:vaporize") // last voice out — room and invite vaporize together
+
+  // ---- 7. presence grace + resume ----
   const dJoined = once<any>(a, "room:joined")
   a.emit("private:create", { roomName: "thin ice" })
   const graceRoom = await dJoined
@@ -278,13 +456,13 @@ async function main() {
   ok((await junkResume).code === "ROOM_GONE", "junk resume token rejected")
 
   // full departure without resume: room ends for the survivor after the window
-  // (checked implicitly by cleanup below — b2 ends the chat instead, faster)
+  // (checked implicitly by cleanup below — b2 vaporizes instead, faster)
   const aGraceEnded = once<any>(a, "room:ended")
-  b2.emit("room:end")
-  ok((await aGraceEnded).by === "bram", "resumed member can end the chat")
+  b2.emit("room:vaporize")
+  ok((await aGraceEnded).by === "bram", "resumed member can vaporize the chat")
   b2.disconnect()
 
-  // ---- 7. rate limiting ----
+  // ---- 8. rate limiting ----
   const r1 = once<any>(a, "room:joined")
   a.emit("private:create", { roomName: "overflow" })
   await r1

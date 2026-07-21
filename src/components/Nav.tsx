@@ -1,3 +1,5 @@
+import { ThemeToggle } from "@/components/ThemeToggle"
+
 export function Nav() {
   return (
     <header className="fixed inset-x-0 top-0 z-40">
@@ -12,12 +14,15 @@ export function Nav() {
           vapor
           <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-signal align-middle" />
         </a>
-        <a
-          href="#cta"
-          className="font-mono text-xs text-fog transition-colors duration-300 hover:text-breath"
-        >
-          start →
-        </a>
+        <div className="flex items-center gap-5">
+          <ThemeToggle />
+          <a
+            href="#cta"
+            className="font-mono text-xs text-fog transition-colors duration-300 hover:text-breath"
+          >
+            start →
+          </a>
+        </div>
       </nav>
     </header>
   )

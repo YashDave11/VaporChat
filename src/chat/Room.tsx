@@ -2,25 +2,34 @@ import { useRef, useState, useCallback, useEffect } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import type { RoomJoined, ReplyRef, PeerInfo } from "@shared/protocol"
+import { ROOM_RULES } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
 import type { ChatSession } from "./useChatSession"
 import { MessageList } from "./MessageList"
 import { Composer } from "./Composer"
+import { SharePanel } from "./SharePanel"
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+}
 
 /**
  * The room shell. One column: context bar, transcript, typing line, composer.
- * Owns the reply-arming and end-confirm state — everything else lives in its
- * children, so a keystroke in the composer never re-renders the transcript.
+ * Owns the reply-arming and vaporize-confirm state — everything else lives in
+ * its children, so a keystroke in the composer never re-renders the transcript.
  *
- * Leaving vs ending: in 1-to-1 rooms the two are the same thing (the server
- * ends the room when either seat empties), so there is one action and it
- * asks first. Open rooms get both: step out quietly, or end it for everyone.
+ * One exit: Vaporize. What it means is the room's kind's business — in 1v1
+ * (stranger, private chat) it ends the conversation for both; in an open room
+ * it removes only you. The confirmation says which before anything happens.
  */
 export function Room({ session }: { session: ChatSession }) {
   const room = session.stage.view === "room" ? session.stage.room : null
   const ref = useRef<HTMLDivElement>(null)
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null)
-  const [confirmEnd, setConfirmEnd] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  /** true while the exit animation is dissolving the panel */
+  const leavingRef = useRef(false)
 
   useGSAP(
     () => {
@@ -39,18 +48,45 @@ export function Room({ session }: { session: ChatSession }) {
     { scope: ref }
   )
 
-  const { sendMessage, sendTyping, clearError } = session
+  const { sendMessage, sendTyping, vaporize, clearError } = session
   const cancelReply = useCallback(() => setReplyTo(null), [])
   const send = useCallback(
     (text: string, reply?: ReplyRef) => sendMessage(text, reply),
     [sendMessage]
   )
-  const openConfirm = useCallback(() => setConfirmEnd(true), [])
-  const closeConfirm = useCallback(() => setConfirmEnd(false), [])
-  const confirmedEnd = useCallback(() => {
-    setConfirmEnd(false)
-    session.endChat()
-  }, [session])
+  const openConfirm = useCallback(() => setConfirmOpen(true), [])
+  const closeConfirm = useCallback(() => setConfirmOpen(false), [])
+  const openShare = useCallback(() => setShareOpen(true), [])
+  const closeShare = useCallback(() => setShareOpen(false), [])
+
+  const oneToOne = room ? ROOM_RULES[room.kind].oneToOne : false
+
+  /**
+   * Confirmed exit: dissolve the panel, then tell the server. The socket call
+   * waits for the animation so the room seems to evaporate rather than cut —
+   * unless reduced motion asks for the cut.
+   */
+  const confirmedVaporize = useCallback(() => {
+    if (leavingRef.current) return
+    leavingRef.current = true
+    setConfirmOpen(false)
+    const done = () => {
+      leavingRef.current = false
+      vaporize(oneToOne)
+    }
+    if (prefersReducedMotion() || !ref.current) {
+      done()
+      return
+    }
+    gsap.to(ref.current, {
+      opacity: 0,
+      y: -16,
+      filter: "blur(12px)",
+      duration: 0.45,
+      ease: "power2.in",
+      onComplete: done,
+    })
+  }, [vaporize, oneToOne])
 
   if (!room) return null
 
@@ -70,8 +106,8 @@ export function Room({ session }: { session: ChatSession }) {
       <ChatHeader
         room={room}
         peers={session.peers}
-        onEnd={openConfirm}
-        onLeave={session.leaveRoom}
+        onVaporize={openConfirm}
+        onShare={openShare}
       />
 
       <MessageList
@@ -92,12 +128,16 @@ export function Room({ session }: { session: ChatSession }) {
         onClearError={clearError}
       />
 
-      {confirmEnd && (
-        <ConfirmEnd
-          oneToOne={room.kind !== "public"}
-          onConfirm={confirmedEnd}
+      {confirmOpen && (
+        <ConfirmVaporize
+          oneToOne={oneToOne}
+          onConfirm={confirmedVaporize}
           onCancel={closeConfirm}
         />
+      )}
+
+      {shareOpen && room.invite && (
+        <SharePanel room={room} onClose={closeShare} />
       )}
     </div>
   )
@@ -119,26 +159,24 @@ function presencePhrase(room: RoomJoined, peers: PeerInfo[]): string {
   return peers[0].status === "active" ? "with you now" : "connection lost…"
 }
 
-/** context bar: kind eyebrow · title · key chip · live presence · actions */
+/** context bar: kind eyebrow · title · live presence · invite · vaporize */
 function ChatHeader({
   room,
   peers,
-  onEnd,
-  onLeave,
+  onVaporize,
+  onShare,
 }: {
   room: RoomJoined
   peers: PeerInfo[]
-  onEnd: () => void
-  onLeave: () => void
+  onVaporize: () => void
+  onShare: () => void
 }) {
-  const [copied, setCopied] = useState(false)
-
   const kindLabel =
     room.kind === "stranger"
-      ? "stranger"
+      ? "stranger · 1 to 1"
       : room.kind === "public"
         ? "open room"
-        : "private room"
+        : "private chat · 1 to 1"
 
   const title = room.kind === "stranger" ? "a stranger" : (room.title ?? "room")
 
@@ -150,17 +188,6 @@ function ChatHeader({
     : anyAway
       ? "bg-fog"
       : "bg-fog-dim"
-
-  const copyKey = async () => {
-    if (!room.key) return
-    try {
-      await navigator.clipboard.writeText(room.key)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1600)
-    } catch {
-      /* clipboard unavailable — the key is still on screen */
-    }
-  }
 
   return (
     <header className="flex items-center justify-between border-b hairline py-3.5">
@@ -182,17 +209,18 @@ function ChatHeader({
             </span>
           </span>
         </div>
-        {room.key && (
+        {room.invite && (
           <button
             type="button"
-            onClick={copyKey}
-            title="Copy room key"
-            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-fog/20 bg-smoke px-2.5 py-1 font-mono text-xs tracking-[0.3em] text-signal transition-colors duration-300 outline-none hover:border-signal/40 focus-visible:ring-2 focus-visible:ring-signal/40"
+            onClick={onShare}
+            title="Invite someone by link"
+            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-fog/20 bg-smoke px-2.5 py-1 font-mono text-[11px] text-fog transition-colors duration-300 outline-none hover:border-signal/40 hover:text-signal focus-visible:ring-2 focus-visible:ring-signal/40"
           >
-            {room.key}
-            <span className="tracking-normal text-[10px] text-fog-dim transition-colors group-hover:text-fog">
-              {copied ? "copied" : "copy"}
-            </span>
+            <span
+              aria-hidden="true"
+              className="h-1 w-1 rounded-full bg-signal/70 transition-colors group-hover:bg-signal"
+            />
+            invite
           </button>
         )}
       </div>
@@ -200,12 +228,7 @@ function ChatHeader({
         <span className="hidden font-mono text-[10px] uppercase tracking-widest text-fog-dim sm:block">
           unrecorded
         </span>
-        {room.kind === "public" && (
-          <Button variant="bare" size="sm" onClick={onLeave}>
-            step out →
-          </Button>
-        )}
-        <Button variant="ghost" size="sm" onClick={onEnd}>
+        <Button variant="danger" size="sm" onClick={onVaporize}>
           vaporize ↗
         </Button>
       </div>
@@ -238,10 +261,11 @@ function TypingLine({ typing }: { typing: string[] }) {
 }
 
 /**
- * The end-chat confirmation: a veil, a question, two ways out.
- * Built from Vapor's own surfaces — no borrowed dialog chrome.
+ * The vaporize confirmation: a veil, a question, two ways out.
+ * Built from Vapor's own surfaces — no borrowed dialog chrome. The copy
+ * carries the semantics: 1v1 warns it ends for both; group says only you go.
  */
-function ConfirmEnd({
+function ConfirmVaporize({
   oneToOne,
   onConfirm,
   onCancel,
@@ -285,7 +309,8 @@ function ConfirmEnd({
       ref={ref}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="end-chat-title"
+      aria-labelledby="vaporize-title"
+      aria-describedby="vaporize-desc"
       className="fixed inset-0 z-40 flex items-center justify-center px-6"
     >
       <button
@@ -297,25 +322,25 @@ function ConfirmEnd({
       />
       <div
         data-panel
-        className="relative w-full max-w-sm rounded-sm border border-fog/20 bg-smoke/95 p-6 backdrop-blur"
+        className="relative w-full max-w-sm rounded-sm border border-ember/25 bg-smoke/95 p-6 shadow-[var(--shadow-panel)] backdrop-blur"
       >
         <p
-          id="end-chat-title"
+          id="vaporize-title"
           className="font-display text-xl font-semibold tracking-tight text-breath"
         >
-          End this chat for everyone?
+          {oneToOne ? "Vaporize this chat?" : "Vaporize out of this room?"}
         </p>
-        <p className="mt-2 text-sm leading-relaxed text-fog">
+        <p id="vaporize-desc" className="mt-2 text-sm leading-relaxed text-fog">
           {oneToOne
-            ? "It ends for both of you. Nothing was kept, and nothing will be."
-            : "The room closes for every voice in it. Nothing was kept, and nothing will be."}
+            ? "It ends for both of you — the room and its key stop existing. Nothing was kept, and nothing will be."
+            : "Only you leave. The room stays on air for the others until the last voice goes."}
         </p>
         <div className="mt-6 flex items-center justify-end gap-3">
           <Button ref={cancelRef} variant="bare" size="sm" onClick={onCancel}>
             keep talking
           </Button>
-          <Button variant="ghost" size="sm" onClick={onConfirm}>
-            end it ↗
+          <Button variant="danger" size="sm" onClick={onConfirm}>
+            {oneToOne ? "vaporize it ↗" : "vaporize me ↗"}
           </Button>
         </div>
       </div>

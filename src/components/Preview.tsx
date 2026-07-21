@@ -69,7 +69,7 @@ export function Preview() {
         <div data-reveal>
           <div
             data-frame
-            className="mx-auto max-w-3xl overflow-hidden rounded-lg border border-fog/15 bg-smoke shadow-[0_40px_120px_-40px_rgba(0,0,0,0.9)]"
+            className="mx-auto max-w-3xl overflow-hidden rounded-lg border border-fog/15 bg-smoke shadow-[var(--shadow-frame)]"
           >
             {/* window strip: no traffic lights, just the address and a live count */}
             <div className="flex items-center justify-between border-b border-fog/10 bg-void/60 px-5 py-3">

@@ -60,7 +60,7 @@ export function FinalCta() {
                 onClick={() => (window.location.hash = "#/chat")}
                 className="cursor-pointer font-mono text-xs text-fog transition-colors duration-300 hover:text-signal"
               >
-                or create a private room →
+                or start a private chat →
               </button>
             </div>
           </div>

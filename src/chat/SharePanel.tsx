@@ -1,0 +1,183 @@
+import { useRef, useState, useEffect, useCallback } from "react"
+import gsap from "gsap"
+import { useGSAP } from "@gsap/react"
+import type { RoomJoined } from "@shared/protocol"
+import { Button } from "@/components/ui/button"
+
+/** the full join URL this room's invite token resolves to */
+function inviteUrl(token: string): string {
+  return `${window.location.origin}${window.location.pathname}#/join/${token}`
+}
+
+/**
+ * The invite surface: a veil and one small panel, same materials as the
+ * vaporize confirm. It holds exactly one idea — "hand someone this link" —
+ * with the copy action as the hero and the native share sheet one step
+ * behind it. Private rooms also show the spoken key: the link is for
+ * sending, the key is for saying out loud.
+ */
+export function SharePanel({
+  room,
+  onClose,
+}: {
+  room: RoomJoined
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const copyRef = useRef<HTMLButtonElement>(null)
+  /** context-safe copied-feedback pulse, installed by useGSAP below */
+  const pulseRef = useRef<(() => void) | null>(null)
+  const [copied, setCopied] = useState(false)
+  const url = inviteUrl(room.invite ?? "")
+  // strip the scheme for display — the link reads like an address, not code
+  const shownUrl = url.replace(/^https?:\/\//, "")
+  const canShare = typeof navigator.share === "function"
+
+  useGSAP(
+    (_ctx, contextSafe) => {
+      const mm = gsap.matchMedia()
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.from("[data-veil]", { opacity: 0, duration: 0.35, ease: "power2.out" })
+        gsap.from("[data-panel]", {
+          opacity: 0,
+          y: 16,
+          filter: "blur(10px)",
+          duration: 0.5,
+          ease: "power3.out",
+        })
+      })
+      // copied feedback: the link line exhales once — quiet confirmation
+      const pulse = contextSafe?.(() => {
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+        gsap.fromTo(
+          "[data-link-line]",
+          { boxShadow: "0 0 0 1px var(--color-signal)" },
+          {
+            boxShadow: "0 0 0 1px transparent",
+            duration: 1.1,
+            ease: "power2.out",
+          }
+        )
+      })
+      pulseRef.current = pulse ?? null
+    },
+    { scope: ref }
+  )
+
+  const copyLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      pulseRef.current?.()
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      /* clipboard unavailable — the link is on screen to select by hand */
+    }
+  }, [url])
+
+  const shareLink = useCallback(() => {
+    navigator
+      .share({
+        title: room.title ? `vapor · ${room.title}` : "vapor",
+        text: "Join me for a conversation that vanishes.",
+        url,
+      })
+      .catch(() => {
+        /* dismissed the sheet — nothing to do */
+      })
+  }, [room.title, url])
+
+  // focus lands on the primary action; Escape lets the veil lift
+  useEffect(() => {
+    copyRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="share-title"
+      className="fixed inset-0 z-40 flex items-center justify-center px-6"
+    >
+      <button
+        type="button"
+        data-veil
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 cursor-default bg-void/70 backdrop-blur-sm"
+      />
+      <div
+        data-panel
+        className="relative w-full max-w-sm rounded-sm border border-fog/20 bg-smoke/95 p-6 shadow-[var(--shadow-panel)] backdrop-blur"
+      >
+        <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-signal/80">
+          invite by link
+        </p>
+        <p
+          id="share-title"
+          className="mt-2 font-display text-xl font-semibold tracking-tight text-breath"
+        >
+          {room.kind === "private"
+            ? "One seat. One link."
+            : "Bring someone in."}
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-fog">
+          {room.kind === "private"
+            ? "Whoever opens this joins you — and the link dies when the chat does."
+            : "Anyone with this link can step into the room while it's on air."}
+        </p>
+
+        {/* the link itself: visible, selectable, never precious */}
+        <div
+          data-link-line
+          className="mt-5 flex items-center gap-2 rounded-sm border border-fog/20 bg-void/40 px-3 py-2.5"
+        >
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-fog select-all">
+            {shownUrl}
+          </span>
+          <span
+            aria-live="polite"
+            className={`shrink-0 font-mono text-[10px] uppercase tracking-[0.15em] transition-colors duration-300 ${
+              copied ? "text-signal" : "text-transparent"
+            }`}
+          >
+            copied
+          </span>
+        </div>
+
+        <div className="mt-4 flex items-center gap-3">
+          <Button ref={copyRef} size="sm" onClick={copyLink} className="flex-1">
+            {copied ? "Copied" : "Copy link"}
+          </Button>
+          {canShare && (
+            <Button variant="ghost" size="sm" onClick={shareLink} className="flex-1">
+              Share…
+            </Button>
+          )}
+        </div>
+
+        {room.key && (
+          <p className="mt-5 border-t hairline pt-4 font-mono text-[11px] text-fog-dim">
+            or say it out loud:{" "}
+            <span className="tracking-[0.3em] text-signal">{room.key}</span>
+            <span className="ml-1.5">— the key works at the gate</span>
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 cursor-pointer rounded-sm p-1.5 font-mono text-[11px] text-fog-dim transition-colors duration-300 outline-none hover:text-breath focus-visible:ring-2 focus-visible:ring-signal/40"
+        >
+          esc ✕
+        </button>
+      </div>
+    </div>
+  )
+}

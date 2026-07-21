@@ -8,6 +8,9 @@
   --color-fog: #878e9a;
   --color-fog-dim: #565c66;
   --color-signal: #a9e8dc;
+  /* destructive accent: a coal about to go out — red, but never a fire alarm */
+  --color-ember: #e8a9a9;
+  --color-ember-dim: #6b3a3a;
 
   --font-display: "Clash Display", "General Sans", system-ui, sans-serif;
   --font-body: "General Sans", system-ui, sans-serif;
@@ -16,8 +19,91 @@
   --ease-fog: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* ---- the night sky (default): atmosphere, depth, and grain ----
+   Everything a component can't say with a token lives here as a variable,
+   so the light theme below can retune the whole sky in one block. */
 :root {
   color-scheme: dark;
+
+  /* ambient casts + haze colors used by the vapor field / fog / veils */
+  --atmo-cast-top: #16222e;
+  --atmo-cast-bottom: #0d141c;
+  --atmo-edge-l: #2e4c58;
+  --atmo-edge-r: #26394c;
+  --atmo-wisp-l: #1d323c;
+  --atmo-wisp-r: #182835;
+  --atmo-sheet-hi: #6d95a5;
+  --atmo-sheet-mid: #4a6b7c;
+  --atmo-sheet-lo: #33505f;
+  --atmo-veil-l: #223a44;
+  --atmo-veil-r: #1c2c3c;
+  --fog-blob-a: rgba(26, 34, 48, 0.6);
+  --fog-blob-b: rgba(19, 26, 30, 0.7);
+  --fog-blob-c: rgba(16, 21, 28, 0.6);
+
+  /* depth: black falls away at night; soft blue-gray settles by day */
+  --shadow-panel: 0 30px 90px -30px rgba(0, 0, 0, 0.8);
+  --shadow-frame: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+  --glow-signal: 0 0 32px rgba(169, 232, 220, 0.25);
+  --glow-ember: 0 0 24px rgba(232, 169, 169, 0.12);
+
+  --grain-opacity: 0.035;
+  --grain-blend: normal;
+}
+
+/* ---- morning fog: the same world at dawn ----
+   Not an inversion — the page is pale mineral mist, surfaces rise toward
+   the light, and signal condenses from mint into deep sea-glass teal.
+   Set before first paint by the inline script in index.html. */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-void: #e8edf0;
+  --color-smoke: #f3f6f8;
+  --color-smoke-2: #fbfcfd;
+  --color-breath: #1d242b;
+  --color-fog: #5b6673;
+  --color-fog-dim: #7f8a96;
+  --color-signal: #12776a;
+  --color-ember: #b0524c;
+  --color-ember-dim: #dcaba6;
+
+  /* the haze keeps drifting, now as mist shadows a breath deeper than the page */
+  --atmo-cast-top: #ccdae4;
+  --atmo-cast-bottom: #d8e2e9;
+  --atmo-edge-l: #a3c1cf;
+  --atmo-edge-r: #adc6d5;
+  --atmo-wisp-l: #b9d1da;
+  --atmo-wisp-r: #b4cbd8;
+  --atmo-sheet-hi: #7fa3b5;
+  --atmo-sheet-mid: #6e93a6;
+  --atmo-sheet-lo: #85a6b6;
+  --atmo-veil-l: #bfd2db;
+  --atmo-veil-r: #c6d5e0;
+  --fog-blob-a: rgba(198, 213, 226, 0.7);
+  --fog-blob-b: rgba(206, 219, 224, 0.75);
+  --fog-blob-c: rgba(214, 224, 231, 0.7);
+
+  --shadow-panel: 0 30px 80px -32px rgba(44, 62, 76, 0.28);
+  --shadow-frame: 0 40px 100px -44px rgba(44, 62, 76, 0.32);
+  --glow-signal: 0 0 32px rgba(18, 119, 106, 0.2);
+  --glow-ember: 0 0 24px rgba(176, 82, 76, 0.15);
+
+  /* film grain on paper: darker speckle only, a touch quieter */
+  --grain-opacity: 0.03;
+  --grain-blend: multiply;
+}
+
+/* structure carries more weight where shadows carry less */
+[data-theme="light"] .hairline {
+  border-color: color-mix(in srgb, var(--color-fog) 28%, transparent);
+}
+
+/* the theme switch: one restrained crossfade, no per-element transitions */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.4s;
+  animation-timing-function: var(--ease-fog);
 }
 
 body {
@@ -41,7 +127,8 @@ body {
   z-index: 50;
   pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-  opacity: 0.035;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
 }
 
 /* ---- ambient fog blobs ---- */
@@ -51,6 +138,343 @@ body {
   filter: blur(90px);
   will-change: transform;
   pointer-events: none;
+}
+
+/* ---- vapor field: the product's ambient layer (non-landing screens) ----
+   Two columns of blue haze lean in from the frame edges; a signal-tinted
+   wisp drifts inside each. Intensity is a data attribute mapped to custom
+   properties, so view changes crossfade the field without JS animation.
+   Everything animated here is transform/opacity only. */
+.vapor-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  --vapor-edge: 0.55;
+  --vapor-wisp: 0.4;
+  --vapor-drift: 44s;
+  --vapor-sheet: 0.55;
+  --vapor-filament: 0.4;
+}
+.vapor-field[data-vapor="heightened"] {
+  --vapor-edge: 0.68;
+  --vapor-wisp: 0.6;
+  --vapor-drift: 28s;
+  --vapor-sheet: 0.65;
+  --vapor-filament: 0.55;
+}
+.vapor-field[data-vapor="quiet"] {
+  --vapor-edge: 0.3;
+  --vapor-wisp: 0.16;
+  --vapor-drift: 64s;
+  --vapor-sheet: 0.2;
+  --vapor-filament: 0.15;
+}
+
+/* faint cool cast up top, grounding at the foot — kills the flat-black page */
+.vapor-base {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      100% 45% at 50% -12%,
+      color-mix(in srgb, var(--atmo-cast-top) 55%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      120% 50% at 50% 112%,
+      color-mix(in srgb, var(--atmo-cast-bottom) 80%, transparent),
+      transparent 65%
+    );
+}
+
+/* the signature: haze columns at the frame edges. Deliberately asymmetric —
+   the left mass sits high, the right sits low — so the frame reads composed
+   rather than mirrored. */
+.vapor-edge {
+  position: absolute;
+  top: -10%;
+  height: 120%;
+  width: clamp(200px, 34vw, 540px);
+  opacity: var(--vapor-edge);
+  transition: opacity 1.4s var(--ease-fog);
+}
+.vapor-edge-l {
+  left: 0;
+  background:
+    radial-gradient(
+      70% 55% at 0% 28%,
+      color-mix(in srgb, var(--atmo-edge-l) 34%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      50% 38% at 0% 70%,
+      color-mix(in srgb, var(--color-signal) 9%, transparent),
+      transparent 70%
+    );
+}
+.vapor-edge-r {
+  right: 0;
+  background:
+    radial-gradient(
+      70% 60% at 100% 68%,
+      color-mix(in srgb, var(--atmo-edge-r) 42%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      48% 34% at 100% 24%,
+      color-mix(in srgb, var(--color-signal) 8%, transparent),
+      transparent 70%
+    );
+}
+
+/* wisps: the slow life inside each edge — transform-only drift. The blur is
+   static (never animated); only transform/opacity ever change. */
+.vapor-wisp {
+  position: absolute;
+  width: 38vw;
+  height: 52vh;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: var(--vapor-wisp);
+  will-change: transform;
+  transition: opacity 1.4s var(--ease-fog);
+}
+.vapor-wisp-l {
+  left: -16%;
+  top: 12%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--color-signal) 11%, var(--atmo-wisp-l) 42%),
+    transparent
+  );
+  animation: vapor-drift-l var(--vapor-drift) ease-in-out infinite alternate;
+}
+.vapor-wisp-r {
+  right: -16%;
+  bottom: 8%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--color-signal) 9%, var(--atmo-wisp-r) 46%),
+    transparent
+  );
+  animation: vapor-drift-r var(--vapor-drift) ease-in-out infinite alternate;
+  animation-delay: -14s;
+}
+@keyframes vapor-drift-l {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(6vw, -7vh, 0) scale(1.12);
+  }
+}
+@keyframes vapor-drift-r {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.08);
+  }
+  to {
+    transform: translate3d(-5vw, 8vh, 0) scale(1);
+  }
+}
+
+/* ---- vapor sheets: the structured layer over the haze ----
+   Tall, thin, slightly rotated translucent strips — folded paper-thin light,
+   not paper. Each sheet is one angled gradient whose mid-stop is the crease;
+   a 1px signal seam rides the fold on a pseudo-element. Masked at both ends
+   so a sheet dissolves into air rather than terminating in an edge. Two per
+   side at different depths; per-sheet rotation/duration via custom props so
+   one keyframe serves them all. Transform/opacity only, like the wisps. */
+.vapor-sheet {
+  position: absolute;
+  top: -6%;
+  height: 112%;
+  width: clamp(60px, 7vw, 120px);
+  opacity: var(--vapor-sheet);
+  transform: rotate(var(--sheet-rot, 0deg));
+  will-change: transform;
+  transition: opacity 1.4s var(--ease-fog);
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 6%,
+    black 34%,
+    black 62%,
+    transparent 92%
+  );
+  animation: sheet-drift var(--sheet-t, 60s) ease-in-out infinite alternate;
+}
+/* the facet: two tonal planes meeting at a crease partway across —
+   luminous against the void, never darker than it */
+.vapor-sheet::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    104deg,
+    transparent 10%,
+    color-mix(in srgb, var(--atmo-sheet-hi) 10%, transparent) 43%,
+    color-mix(in srgb, var(--atmo-sheet-mid) 17%, transparent) 46%,
+    color-mix(in srgb, var(--atmo-sheet-lo) 8%, transparent) 80%,
+    transparent
+  );
+}
+/* the seam: a hairline of signal caught on the fold, breathing slowly */
+.vapor-sheet::after {
+  content: "";
+  position: absolute;
+  top: 18%;
+  bottom: 22%;
+  left: 45%;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--color-signal) 45%, transparent) 50%,
+    transparent
+  );
+  animation: seam-breathe calc(var(--sheet-t, 60s) / 2.4) ease-in-out infinite
+    alternate;
+}
+
+/* placement: near sheets hug the frame, far sheets lean slightly inward.
+   Distinct lengths and verticals — drifting fragments, never a converging
+   box. Same deliberate asymmetry as the edges: left rides high, right low. */
+.vapor-sheet-l1 {
+  left: 2vw;
+  top: -8%;
+  height: 86%;
+  --sheet-rot: 7deg;
+  --sheet-t: 58s;
+}
+.vapor-sheet-l2 {
+  left: 9vw;
+  top: 34%;
+  height: 62%;
+  --sheet-rot: 11deg;
+  --sheet-t: 74s;
+  animation-delay: -26s;
+  opacity: calc(var(--vapor-sheet) * 0.55);
+}
+.vapor-sheet-r1 {
+  right: 2.5vw;
+  top: 22%;
+  height: 84%;
+  --sheet-rot: -6deg;
+  --sheet-t: 66s;
+  animation-delay: -40s;
+}
+.vapor-sheet-r2 {
+  right: 10vw;
+  top: -10%;
+  height: 58%;
+  --sheet-rot: -12deg;
+  --sheet-t: 82s;
+  animation-delay: -12s;
+  opacity: calc(var(--vapor-sheet) * 0.5);
+}
+/* the right sheets fold the other way — crease gradient mirrored */
+.vapor-sheet-r1::before,
+.vapor-sheet-r2::before {
+  background: linear-gradient(
+    -104deg,
+    transparent 10%,
+    color-mix(in srgb, var(--atmo-sheet-hi) 10%, transparent) 43%,
+    color-mix(in srgb, var(--atmo-sheet-mid) 17%, transparent) 46%,
+    color-mix(in srgb, var(--atmo-sheet-lo) 8%, transparent) 80%,
+    transparent
+  );
+}
+.vapor-sheet-r1::after,
+.vapor-sheet-r2::after {
+  left: auto;
+  right: 45%;
+}
+
+@keyframes sheet-drift {
+  from {
+    transform: rotate(var(--sheet-rot, 0deg)) translate3d(0, 0, 0);
+  }
+  to {
+    transform: rotate(calc(var(--sheet-rot, 0deg) + 1.4deg))
+      translate3d(0.4vw, -1.6vh, 0);
+  }
+}
+@keyframes seam-breathe {
+  from {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- filaments: 1px signal threads adrift near each flank ----
+   The cinematic edge artifact — kin to the hairline rules and dial ticks. */
+.vapor-filament {
+  position: absolute;
+  width: 1px;
+  height: 34vh;
+  opacity: var(--vapor-filament);
+  will-change: transform;
+  transition: opacity 1.4s var(--ease-fog);
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--color-signal) 30%, transparent) 45%,
+    color-mix(in srgb, var(--color-signal) 14%, transparent) 60%,
+    transparent
+  );
+  animation: filament-drift var(--fil-t, 48s) ease-in-out infinite alternate;
+}
+.vapor-filament-l {
+  left: 6vw;
+  top: 46%;
+  --fil-t: 52s;
+}
+.vapor-filament-r {
+  right: 7vw;
+  top: 10%;
+  --fil-t: 44s;
+  animation-delay: -18s;
+  height: 26vh;
+}
+@keyframes filament-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0.6vw, -5vh, 0);
+  }
+}
+
+/* under the sm breakpoint the flanks are gone — the field steps far back,
+   and the structured layer leaves entirely (nothing to frame, nothing to pay) */
+@media (max-width: 640px) {
+  .vapor-field {
+    --vapor-edge: 0.22;
+    --vapor-wisp: 0.1;
+  }
+  .vapor-sheet,
+  .vapor-filament {
+    display: none;
+  }
+}
+
+/* overlay veils: the same haze pooling at the edges, static, behind a board */
+.vapor-veil {
+  background:
+    radial-gradient(
+      50% 70% at 0% 50%,
+      color-mix(in srgb, var(--atmo-veil-l) 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      50% 70% at 100% 50%,
+      color-mix(in srgb, var(--atmo-veil-r) 26%, transparent),
+      transparent 70%
+    ),
+    color-mix(in srgb, var(--color-void) 80%, transparent);
 }
 
 /* ---- hairline rules ---- */
@@ -188,6 +612,40 @@ body {
   }
 }
 
+/* ---- gate panels: an expanded channel condenses in below its row ---- */
+.panel-in {
+  animation: panel-in 0.4s var(--ease-fog) both;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* ---- open-room rows: each surfaces in turn (delay set inline) ---- */
+.room-in {
+  animation: room-in 0.5s var(--ease-fog) both;
+}
+@keyframes room-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .blink,
   .presence::after,
@@ -196,7 +654,14 @@ body {
   .pill-in,
   .reply-in,
   .typing-in,
-  .typing-dot {
+  .typing-dot,
+  .panel-in,
+  .room-in,
+  .vapor-wisp-l,
+  .vapor-wisp-r,
+  .vapor-sheet,
+  .vapor-sheet::after,
+  .vapor-filament {
     animation: none;
   }
   .quote-flash {

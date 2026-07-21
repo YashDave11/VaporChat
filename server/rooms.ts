@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto"
+import { randomUUID, randomInt } from "node:crypto"
 import type { RoomKind, PublicRoomInfo, PeerInfo, PeerStatus } from "../shared/protocol.ts"
-import { LIMITS } from "../shared/protocol.ts"
+import { LIMITS, ROOM_RULES } from "../shared/protocol.ts"
 
 /**
  * In-memory room engine. Everything lives in these Maps and nowhere else —
@@ -29,8 +29,12 @@ export interface Room {
   kind: RoomKind
   capacity: number
   createdAt: number
+  /** display name of whoever opened the room — "" for matched strangers */
+  createdBy: string
   /** private rooms only */
   key?: string
+  /** shareable rooms only — the token their join link carries */
+  invite?: string
   /** creator-chosen name — public and private rooms */
   title?: string
   /** memberId → seat */
@@ -40,19 +44,37 @@ export interface Room {
 const rooms = new Map<string, Room>()
 /** key → roomId for private-room joins */
 const privateKeys = new Map<string, string>()
+/** invite token → roomId for link joins */
+const inviteTokens = new Map<string, string>()
 /** resumeToken → { roomId, memberId } for seat reclaim */
 const resumeTokens = new Map<string, { roomId: string; memberId: string }>()
 
 // glyphs avoid ambiguous 0/O, 1/I/L, 8/B — a key you can read aloud once
 const KEY_GLYPHS = "ACDEFHJKMNPRTVWXYZ234679"
 
+function mintGlyphs(length: number): string {
+  let out = ""
+  for (let i = 0; i < length; i++) {
+    out += KEY_GLYPHS[randomInt(KEY_GLYPHS.length)]
+  }
+  return out
+}
+
 function mintKey(): string {
   for (;;) {
-    let key = ""
-    for (let i = 0; i < LIMITS.KEY_LENGTH; i++) {
-      key += KEY_GLYPHS[Math.floor(Math.random() * KEY_GLYPHS.length)]
-    }
+    const key = mintGlyphs(LIMITS.KEY_LENGTH)
     if (!privateKeys.has(key)) return key
+  }
+}
+
+/**
+ * Invite tokens share the readable alphabet but are long enough to be
+ * unguessable (24^10 ≈ 6×10^13) — a link, not a thing you type.
+ */
+function mintInvite(): string {
+  for (;;) {
+    const token = mintGlyphs(LIMITS.INVITE_LENGTH)
+    if (!inviteTokens.has(token)) return token
   }
 }
 
@@ -64,44 +86,36 @@ export function isFull(room: Room): boolean {
   return room.members.size >= room.capacity
 }
 
-export function createStrangerRoom(): Room {
-  const room: Room = {
-    id: `s-${randomUUID().slice(0, 8)}`,
-    kind: "stranger",
-    capacity: LIMITS.STRANGER_CAP,
-    createdAt: Date.now(),
-    members: new Map(),
-  }
-  rooms.set(room.id, room)
-  return room
-}
+/** id prefixes keep room kinds legible in logs: s-, g-, p- */
+const KIND_PREFIX = { stranger: "s", public: "g", private: "p" } as const
 
-export function createPublicRoom(title: string): Room {
+/**
+ * The one constructor. ROOM_RULES supplies capacity; private rooms mint
+ * their key here, shareable rooms mint their invite token here — neither
+ * can ever exist without its room.
+ */
+export function createRoom(
+  kind: RoomKind,
+  opts: { title?: string; createdBy?: string } = {}
+): Room {
   const room: Room = {
-    id: `g-${randomUUID().slice(0, 8)}`,
-    kind: "public",
-    capacity: LIMITS.PUBLIC_CAP,
+    id: `${KIND_PREFIX[kind]}-${randomUUID().slice(0, 8)}`,
+    kind,
+    capacity: ROOM_RULES[kind].capacity,
     createdAt: Date.now(),
-    title,
+    createdBy: opts.createdBy ?? "",
+    title: opts.title,
     members: new Map(),
   }
-  rooms.set(room.id, room)
-  return room
-}
-
-export function createPrivateRoom(title: string): Room {
-  const key = mintKey()
-  const room: Room = {
-    id: `p-${randomUUID().slice(0, 8)}`,
-    kind: "private",
-    capacity: LIMITS.PRIVATE_CAP,
-    createdAt: Date.now(),
-    key,
-    title,
-    members: new Map(),
+  if (kind === "private") {
+    room.key = mintKey()
+    privateKeys.set(room.key, room.id)
+  }
+  if (ROOM_RULES[kind].shareable) {
+    room.invite = mintInvite()
+    inviteTokens.set(room.invite, room.id)
   }
   rooms.set(room.id, room)
-  privateKeys.set(key, room.id)
   return room
 }
 
@@ -110,14 +124,20 @@ export function findPrivateRoom(key: string): Room | undefined {
   return roomId ? rooms.get(roomId) : undefined
 }
 
+/** the room a shared link points at — undefined once it has vaporized */
+export function findInvitedRoom(token: string): Room | undefined {
+  const roomId = inviteTokens.get(token.toUpperCase())
+  return roomId ? rooms.get(roomId) : undefined
+}
+
 /**
- * The discoverable directory: active public rooms only, safe metadata only.
- * Freshest first — a new room should surface at the top of the gate.
+ * The discoverable directory: rooms whose rules say so (public only), safe
+ * metadata only. Freshest first — a new room surfaces at the top of the gate.
  */
 export function publicDirectory(): PublicRoomInfo[] {
   const list: PublicRoomInfo[] = []
   for (const room of rooms.values()) {
-    if (room.kind !== "public") continue
+    if (!ROOM_RULES[room.kind].discoverable) continue
     list.push({
       id: room.id,
       title: room.title ?? "room",
@@ -192,9 +212,10 @@ export function removeMember(room: Room, memberId: string): boolean {
   return false
 }
 
-/** authoritative teardown: registry, private key, and every resume token */
+/** authoritative teardown: registry, private key, invite, every resume token */
 export function deleteRoom(room: Room): void {
   for (const m of room.members.values()) resumeTokens.delete(m.resumeToken)
   rooms.delete(room.id)
   if (room.key) privateKeys.delete(room.key)
+  if (room.invite) inviteTokens.delete(room.invite)
 }

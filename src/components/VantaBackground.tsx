@@ -1,13 +1,25 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useSyncExternalStore } from "react"
+import { getResolvedTheme, subscribeTheme, type ResolvedTheme } from "@/lib/theme"
 
 /**
  * Vanta NET constellation, tuned to the Vapor palette: faint signal-mint
  * lines drifting in the void, like a network you can see but not record.
  * three.js + vanta load lazily so the initial bundle stays lean, and the
  * whole effect is skipped under prefers-reduced-motion.
+ *
+ * Vanta bakes its colors into materials at construction, so a theme change
+ * rebuilds the effect — the View Transition crossfade covers the seam.
  */
+const NET_PALETTE: Record<ResolvedTheme, { color: number; bg: number }> = {
+  // night: dim condensation-mint on void
+  dark: { color: 0x2e5850, bg: 0x08090b },
+  // morning: sea-glass threads a breath deeper than the mist
+  light: { color: 0x7fb5aa, bg: 0xe8edf0 },
+}
+
 export function VantaBackground() {
   const ref = useRef<HTMLDivElement>(null)
+  const theme = useSyncExternalStore(subscribeTheme, getResolvedTheme, () => "dark" as const)
 
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
@@ -35,6 +47,7 @@ export function VantaBackground() {
         console.warn("vanta NET export not found; skipping background")
         return
       }
+      const palette = NET_PALETTE[theme]
       effect = NET({
         el: ref.current,
         THREE,
@@ -45,9 +58,8 @@ export function VantaBackground() {
         minWidth: 200.0,
         scale: 1.0,
         scaleMobile: 1.0,
-        // palette-matched: dim condensation-mint on void
-        color: 0x2e5850,
-        backgroundColor: 0x08090b,
+        color: palette.color,
+        backgroundColor: palette.bg,
         backgroundAlpha: 1,
         points: 9.0,
         maxDistance: 21.0,
@@ -60,7 +72,7 @@ export function VantaBackground() {
       cancelled = true
       effect?.destroy()
     }
-  }, [])
+  }, [theme])
 
   return (
     <div ref={ref} aria-hidden="true" className="fixed inset-0 z-0" />

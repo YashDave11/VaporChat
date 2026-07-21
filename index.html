@@ -8,6 +8,23 @@
       content="Vapor — anonymous chat with zero signup and zero history. Talk to a stranger, join the lobby, or open a private room. Talk. Then it's gone."
     />
     <meta name="theme-color" content="#08090b" />
+    <script>
+      // set the sky before first paint: stored override wins, otherwise the
+      // system preference — theme.ts keeps this in sync from then on
+      ;(function () {
+        var t = null
+        try {
+          t = localStorage.getItem("vapor:theme")
+        } catch (e) {}
+        if (t !== "light" && t !== "dark")
+          t = window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark"
+        document.documentElement.dataset.theme = t
+        var m = document.querySelector('meta[name="theme-color"]')
+        if (m) m.setAttribute("content", t === "light" ? "#e8edf0" : "#08090b")
+      })()
+    </script>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

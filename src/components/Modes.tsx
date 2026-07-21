@@ -2,6 +2,7 @@ import { useRef } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import { useReveal } from "@/hooks/useReveal"
+import { tokenColor, tokenRGBA } from "@/lib/theme"
 
 const KEY = ["K", "7", "X", "Q"]
 const GLYPHS = "ABCDEFGHJKMNPQRSTVWXYZ2345679"
@@ -21,7 +22,7 @@ const MODES = [
   },
   {
     freq: "CH·03",
-    name: "Private room",
+    name: "Private chat",
     desc: "Four characters. Share them with one person you trust, talk, and let the key die with the room.",
     meta: "you ↔ one with the key",
   },
@@ -44,18 +45,20 @@ export function Modes() {
           const reroll = () => {
             cell.textContent =
               GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
-            // brief mint flash + blur-in on each new glyph
+            // brief mint flash + blur-in on each new glyph — colors read off
+            // the live tokens so a mid-loop theme flip stays in key
+            const signal = tokenColor("--color-signal")
             gsap.fromTo(
               cell,
               {
-                color: "#a9e8dc",
+                color: signal,
                 filter: "blur(3px)",
-                boxShadow: "0 0 14px rgba(169,232,220,0.35)",
+                boxShadow: `0 0 14px ${tokenRGBA("--color-signal", 0.35)}`,
               },
               {
-                color: "#a9e8dc",
+                color: signal,
                 filter: "blur(0px)",
-                boxShadow: "0 0 0px rgba(169,232,220,0)",
+                boxShadow: `0 0 0px ${tokenRGBA("--color-signal", 0)}`,
                 duration: 0.45,
                 ease: "power2.out",
               }

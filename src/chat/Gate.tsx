@@ -2,53 +2,50 @@ import { useState, useRef, useEffect, useId } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import { Button } from "@/components/ui/button"
-import { LIMITS, type PublicRoomInfo } from "@shared/protocol"
+import { LIMITS } from "@shared/protocol"
 import type { ChatSession } from "./useChatSession"
 import { rememberedName } from "./useChatSession"
+import { RoomBrowser } from "./RoomBrowser"
 
-type Channel = "stranger" | "public" | "private" | "join"
+/**
+ * The four intents of the gate. "stranger" acts immediately; "open" raises
+ * the full room board over the gate; the other two expand an inline panel —
+ * only one panel is ever open, so the first screen stays a quiet list of
+ * four lines no matter what's inside them.
+ */
+type Channel = "stranger" | "open" | "create" | "key"
 
 const CHANNELS: { id: Channel; freq: string; name: string; desc: string }[] = [
   {
     id: "stranger",
     freq: "CH·01",
-    name: "Stranger",
-    desc: "Pair with someone, somewhere. No profile, no follow button.",
+    name: "Find Stranger",
+    desc: "One-to-one with someone, somewhere — you both say yes first. No room, no profile, no trace.",
   },
   {
-    id: "public",
+    id: "open",
     freq: "CH·02",
-    name: "New open room",
-    desc: "Name a room anyone can find. Ten voices at most.",
+    name: "Join an Open Room",
+    desc: "Browse what's on air right now and step into a room.",
   },
   {
-    id: "private",
+    id: "create",
     freq: "CH·03",
-    name: "New private room",
-    desc: "Name it, get a four-character key. One conversation, two people.",
+    name: "Create a Room",
+    desc: "Host a conversation — open to anyone, or private behind a key.",
   },
   {
-    id: "join",
+    id: "key",
     freq: "CH·04",
-    name: "Join with a key",
-    desc: "Someone gave you four characters. Use them here.",
+    name: "Join with a Key",
+    desc: "Someone gave you four characters. Their private chat opens here.",
   },
 ]
 
-/** "moments ago" freshness — precise enough for rooms that live minutes */
-function freshness(createdAt: number): string {
-  const mins = Math.floor((Date.now() - createdAt) / 60_000)
-  if (mins < 1) return "just formed"
-  if (mins === 1) return "1 min"
-  if (mins < 60) return `${mins} min`
-  return `${Math.floor(mins / 60)} h`
-}
-
 /**
  * The gate: name yourself and pick a channel. The name is not optional —
- * every action below the field checks it first and points back here.
- * Same hairline-list language as the landing page's Modes section, with the
- * open-room directory continuing the list below — one instrument, five bands.
+ * every action funnels through requireName() and points back to the field.
+ * Same hairline-list language as the landing page's Modes section.
  */
 export function Gate({ session }: { session: ChatSession }) {
   const [name, setName] = useState(rememberedName)
@@ -56,8 +53,11 @@ export function Gate({ session }: { session: ChatSession }) {
   const [key, setKey] = useState("")
   const [roomName, setRoomName] = useState("")
   const [roomNameError, setRoomNameError] = useState(false)
-  /** which channel's inline panel is open (public/private/join) */
+  /** create-panel choice: discoverable room or keyed private chat */
+  const [createKind, setCreateKind] = useState<"public" | "private">("public")
   const [openPanel, setOpenPanel] = useState<Channel | null>(null)
+  /** the room board — a surface over the gate, not a panel inside it */
+  const [browsing, setBrowsing] = useState(false)
   const keyInputRef = useRef<HTMLInputElement>(null)
   const roomNameRef = useRef<HTMLInputElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -66,17 +66,17 @@ export function Gate({ session }: { session: ChatSession }) {
   const keyFieldId = useId()
   const roomNameFieldId = useId()
 
-  const joinOpen = openPanel === "join"
+  const keyOpen = openPanel === "key"
   const badKey =
     session.error &&
     (session.error.code === "BAD_KEY" ||
-      (session.error.code === "ROOM_FULL" && joinOpen))
+      (session.error.code === "ROOM_FULL" && keyOpen))
       ? session.error
       : null
   const directoryError =
     session.error &&
     (session.error.code === "ROOM_GONE" ||
-      (session.error.code === "ROOM_FULL" && !joinOpen))
+      (session.error.code === "ROOM_FULL" && !keyOpen))
       ? session.error
       : null
 
@@ -98,9 +98,8 @@ export function Gate({ session }: { session: ChatSession }) {
   )
 
   useEffect(() => {
-    if (openPanel === "join") keyInputRef.current?.focus()
-    if (openPanel === "public" || openPanel === "private")
-      roomNameRef.current?.focus()
+    if (openPanel === "key") keyInputRef.current?.focus()
+    if (openPanel === "create") roomNameRef.current?.focus()
   }, [openPanel])
 
   /** the one rule of the gate: no name, no channel */
@@ -115,20 +114,28 @@ export function Gate({ session }: { session: ChatSession }) {
   }
 
   const pick = (channel: Channel) => {
-    const clean = requireName()
-    if (!clean) return
-    session.clearError()
     if (channel === "stranger") {
+      // the direct path: no panel, no creation — straight into the queue
+      const clean = requireName()
+      if (!clean) return
+      session.clearError()
       session.hello(clean)
       session.joinQueue()
       return
     }
-    // create/join channels open their inline panel first
+    if (channel === "open") {
+      // browsing is free; naming yourself is the price of *entering*
+      session.clearError()
+      setBrowsing(true)
+      setOpenPanel(null)
+      return
+    }
+    session.clearError()
     setOpenPanel((p) => (p === channel ? null : channel))
     setRoomNameError(false)
   }
 
-  const createRoom = (kind: "public" | "private") => {
+  const createRoom = () => {
     const clean = requireName()
     if (!clean) return
     const title = roomName.trim()
@@ -139,13 +146,17 @@ export function Gate({ session }: { session: ChatSession }) {
     }
     session.clearError()
     session.hello(clean)
-    if (kind === "public") session.createPublicRoom(title)
+    if (createKind === "public") session.createPublicRoom(title)
     else session.createPrivateRoom(title)
   }
 
   const joinListed = (roomId: string) => {
     const clean = requireName()
-    if (!clean) return
+    if (!clean) {
+      // no name yet — the board steps aside so the field can ask for one
+      setBrowsing(false)
+      return
+    }
     session.clearError()
     session.hello(clean)
     session.joinPublicRoom(roomId)
@@ -160,6 +171,8 @@ export function Gate({ session }: { session: ChatSession }) {
     session.hello(clean)
     session.joinPrivateRoom(k)
   }
+
+  const onAir = session.directory.length
 
   return (
     <div ref={ref} className="mx-auto w-full max-w-2xl px-6">
@@ -197,7 +210,7 @@ export function Gate({ session }: { session: ChatSession }) {
           aria-describedby={nameError ? `${nameFieldId}-err` : undefined}
           className={`mt-2 block w-full rounded-sm border bg-smoke/60 px-4 py-3 font-body text-breath placeholder:text-fog-dim outline-none transition-colors duration-300 focus-visible:ring-2 focus-visible:ring-signal/40 ${
             nameError
-              ? "border-red-400/40"
+              ? "border-ember/50"
               : "border-fog/20 focus:border-signal/50"
           }`}
         />
@@ -205,7 +218,7 @@ export function Gate({ session }: { session: ChatSession }) {
           <p
             id={`${nameFieldId}-err`}
             role="alert"
-            className="mt-2 font-mono text-xs text-red-300/80"
+            className="mt-2 font-mono text-xs text-ember"
           >
             A name first. Any name — it only has to last one conversation.
           </p>
@@ -217,7 +230,14 @@ export function Gate({ session }: { session: ChatSession }) {
           <li key={c.id} className="border-b hairline">
             <button
               type="button"
-              aria-expanded={c.id !== "stranger" ? openPanel === c.id : undefined}
+              aria-expanded={
+                c.id === "open"
+                  ? browsing
+                  : c.id !== "stranger"
+                    ? openPanel === c.id
+                    : undefined
+              }
+              aria-haspopup={c.id === "open" ? "dialog" : undefined}
               onClick={() => pick(c.id)}
               className="group grid w-full cursor-pointer grid-cols-[72px_1fr] items-baseline gap-4 py-6 text-left transition-colors duration-500 outline-none hover:bg-smoke/40 focus-visible:bg-smoke/40 sm:grid-cols-[110px_1fr] sm:px-4"
             >
@@ -225,8 +245,13 @@ export function Gate({ session }: { session: ChatSession }) {
                 {c.freq}
               </span>
               <span>
-                <span className="font-display text-xl font-medium text-breath">
+                <span className="flex items-baseline gap-3 font-display text-xl font-medium text-breath">
                   {c.name}
+                  {c.id === "open" && onAir > 0 && (
+                    <span className="font-mono text-[11px] font-normal tracking-normal text-signal/80">
+                      {onAir} on air
+                    </span>
+                  )}
                 </span>
                 <span className="mt-1 block text-sm leading-relaxed text-fog">
                   {c.desc}
@@ -234,15 +259,68 @@ export function Gate({ session }: { session: ChatSession }) {
               </span>
             </button>
 
-            {(c.id === "public" || c.id === "private") &&
-              openPanel === c.id && (
-                <form
-                  className="flex flex-wrap items-end gap-3 pb-6 pl-[88px] sm:pl-[126px] sm:pr-4"
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    createRoom(c.id as "public" | "private")
-                  }}
-                >
+            {c.id === "create" && openPanel === "create" && (
+              <form
+                className="panel-in flex flex-col gap-4 pb-6 pl-[88px] sm:pl-[126px] sm:pr-4"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  createRoom()
+                }}
+              >
+                {/* kind selector: two quiet radio lines, not tabs, not cards */}
+                <fieldset>
+                  <legend className="font-mono text-[11px] uppercase tracking-[0.2em] text-fog-dim">
+                    what kind?
+                  </legend>
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {(
+                      [
+                        {
+                          kind: "public",
+                          label: "Open room",
+                          hint: "anyone can find it · up to ten voices",
+                        },
+                        {
+                          kind: "private",
+                          label: "Private chat",
+                          hint: "one-to-one · joined by key only",
+                        },
+                      ] as const
+                    ).map((o) => (
+                      <label
+                        key={o.kind}
+                        className={`flex cursor-pointer items-baseline gap-3 rounded-sm border px-3.5 py-2.5 transition-colors duration-300 ${
+                          createKind === o.kind
+                            ? "border-signal/40 bg-smoke/60"
+                            : "border-fog/15 hover:border-fog/35"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="create-kind"
+                          value={o.kind}
+                          checked={createKind === o.kind}
+                          onChange={() => setCreateKind(o.kind)}
+                          className="sr-only"
+                        />
+                        <span
+                          aria-hidden="true"
+                          className={`h-1.5 w-1.5 shrink-0 translate-y-[-1px] rounded-full transition-colors duration-300 ${
+                            createKind === o.kind ? "bg-signal" : "bg-fog/30"
+                          }`}
+                        />
+                        <span className="font-body text-sm font-medium text-breath">
+                          {o.label}
+                        </span>
+                        <span className="font-mono text-[11px] text-fog-dim">
+                          {o.hint}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <div className="flex flex-wrap items-end gap-3">
                   <div className="min-w-0 flex-1 basis-56">
                     <label
                       htmlFor={roomNameFieldId}
@@ -262,7 +340,9 @@ export function Gate({ session }: { session: ChatSession }) {
                       }}
                       maxLength={LIMITS.ROOM_NAME_MAX}
                       placeholder={
-                        c.id === "public" ? "what's it about?" : "name it anyway"
+                        createKind === "public"
+                          ? "what's it about?"
+                          : "name this conversation"
                       }
                       autoComplete="off"
                       spellCheck={false}
@@ -272,29 +352,30 @@ export function Gate({ session }: { session: ChatSession }) {
                       }
                       className={`mt-2 block w-full rounded-sm border bg-smoke/60 px-4 py-2.5 font-body text-breath placeholder:text-fog-dim outline-none transition-colors duration-300 focus-visible:ring-2 focus-visible:ring-signal/40 ${
                         roomNameError
-                          ? "border-red-400/40"
+                          ? "border-ember/50"
                           : "border-fog/20 focus:border-signal/50"
                       }`}
                     />
                   </div>
                   <Button type="submit" variant="ghost" size="default">
-                    {c.id === "public" ? "Open the room" : "Mint the key"}
+                    {createKind === "public" ? "Open the room" : "Mint the key"}
                   </Button>
                   {roomNameError && (
                     <p
                       id={`${roomNameFieldId}-err`}
                       role="alert"
-                      className="w-full font-mono text-xs text-red-300/80"
+                      className="w-full font-mono text-xs text-ember"
                     >
                       The room needs a name before it can exist.
                     </p>
                   )}
-                </form>
-              )}
+                </div>
+              </form>
+            )}
 
-            {c.id === "join" && joinOpen && (
+            {c.id === "key" && keyOpen && (
               <form
-                className="flex flex-wrap items-end gap-3 pb-6 pl-[88px] sm:pl-[126px] sm:pr-4"
+                className="panel-in flex flex-wrap items-end gap-3 pb-6 pl-[88px] sm:pl-[126px] sm:pr-4"
                 onSubmit={(e) => {
                   e.preventDefault()
                   submitKey()
@@ -324,7 +405,7 @@ export function Gate({ session }: { session: ChatSession }) {
                     aria-invalid={badKey ? true : undefined}
                     aria-describedby={badKey ? `${keyFieldId}-err` : undefined}
                     className={`w-32 rounded-sm border bg-smoke/60 px-4 py-2.5 text-center font-mono text-lg tracking-[0.5em] text-signal placeholder:text-fog-dim outline-none transition-colors duration-300 focus-visible:ring-2 focus-visible:ring-signal/40 ${
-                      badKey ? "border-red-400/40" : "border-fog/20 focus:border-signal/50"
+                      badKey ? "border-ember/50" : "border-fog/20 focus:border-signal/50"
                     }`}
                   />
                 </div>
@@ -340,7 +421,7 @@ export function Gate({ session }: { session: ChatSession }) {
                   <p
                     id={`${keyFieldId}-err`}
                     role="alert"
-                    className="w-full font-mono text-xs text-red-300/80"
+                    className="w-full font-mono text-xs text-ember"
                   >
                     {badKey.code === "ROOM_FULL"
                       ? badKey.message
@@ -353,111 +434,22 @@ export function Gate({ session }: { session: ChatSession }) {
         ))}
       </ul>
 
-      <Directory
-        rooms={session.directory}
-        error={directoryError?.message ?? null}
-        onJoin={joinListed}
-      />
-
       <p data-gate-item className="mt-8 font-mono text-[11px] text-fog-dim">
         no account · no history · nothing leaves this session
       </p>
+
+      {browsing && (
+        <RoomBrowser
+          rooms={session.directory}
+          error={directoryError?.message ?? null}
+          onJoin={joinListed}
+          onCreate={() => {
+            setBrowsing(false)
+            setOpenPanel("create")
+          }}
+          onClose={() => setBrowsing(false)}
+        />
+      )}
     </div>
-  )
-}
-
-/**
- * The open-room directory: rooms that exist right now and stop existing when
- * their last voice leaves. A signal meter per room, not a server browser.
- */
-function Directory({
-  rooms,
-  error,
-  onJoin,
-}: {
-  rooms: PublicRoomInfo[]
-  error: string | null
-  onJoin: (roomId: string) => void
-}) {
-  return (
-    <section data-gate-item className="mt-10" aria-label="Open rooms">
-      <div className="flex items-baseline justify-between">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.2em] text-fog-dim">
-          open rooms · live
-        </h2>
-        {rooms.length > 0 && (
-          <span className="font-mono text-[11px] text-fog-dim">
-            {rooms.length} on air
-          </span>
-        )}
-      </div>
-
-      {error && (
-        <p role="alert" className="mt-3 font-mono text-xs text-red-300/80">
-          {error}
-        </p>
-      )}
-
-      {rooms.length === 0 ? (
-        <p className="mt-4 border-t hairline pt-5 pb-2 font-mono text-xs leading-relaxed text-fog-dim">
-          nothing on air right now.
-          <span className="text-fog"> start an open room</span> and it will
-          appear here until the last person leaves.
-        </p>
-      ) : (
-        <ul className="mt-4 border-t hairline" role="list">
-          {rooms.map((room) => {
-            const full = room.count >= room.capacity
-            return (
-              <li key={room.id} className="border-b hairline">
-                <button
-                  type="button"
-                  onClick={() => onJoin(room.id)}
-                  disabled={full}
-                  className="group flex w-full cursor-pointer items-center gap-4 py-4 text-left transition-colors duration-500 outline-none hover:bg-smoke/40 focus-visible:bg-smoke/40 disabled:cursor-default disabled:hover:bg-transparent sm:px-4"
-                >
-                  <span
-                    aria-hidden="true"
-                    className="flex h-3 items-end gap-[3px]"
-                  >
-                    {Array.from({ length: room.capacity }, (_, i) => (
-                      <span
-                        key={i}
-                        className={`w-[3px] rounded-full transition-colors duration-500 ${
-                          i < room.count
-                            ? "h-3 bg-signal/80"
-                            : "h-1.5 bg-fog/20"
-                        }`}
-                      />
-                    ))}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={`block truncate font-display text-base font-medium ${
-                        full ? "text-fog-dim" : "text-breath"
-                      }`}
-                    >
-                      {room.title}
-                    </span>
-                  </span>
-                  <span className="shrink-0 font-mono text-[11px] text-fog-dim">
-                    {room.count}/{room.capacity} · {freshness(room.createdAt)}
-                  </span>
-                  <span
-                    className={`shrink-0 font-mono text-[11px] transition-colors duration-500 ${
-                      full
-                        ? "text-fog-dim"
-                        : "text-fog group-hover:text-signal"
-                    }`}
-                  >
-                    {full ? "full" : "join →"}
-                  </span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </section>
   )
 }

@@ -21,7 +21,9 @@ const getHash = () => window.location.hash
 
 export default function App() {
   const hash = useSyncExternalStore(subscribeHash, getHash)
-  const inChat = hash.startsWith("#/chat")
+  // #/chat is the front door; #/join/<token> is a shared invite link —
+  // both land in the chat app, which reads the token off the hash itself
+  const inChat = hash.startsWith("#/chat") || hash.startsWith("#/join/")
 
   if (inChat) {
     return (

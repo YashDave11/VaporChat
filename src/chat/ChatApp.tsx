@@ -1,12 +1,25 @@
-import { useRef } from "react"
+import { useRef, useSyncExternalStore } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
+import type { EndCause } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
-import { FogBackground } from "@/components/FogBackground"
+import { VaporField, type VaporIntensity } from "@/components/VaporField"
+import { ThemeToggle } from "@/components/ThemeToggle"
+import { isSoundOn, setSoundOn, subscribeSound } from "@/lib/sound"
 import { useChatSession } from "./useChatSession"
 import { Gate } from "./Gate"
 import { Matching } from "./Matching"
+import { JoinGate } from "./JoinGate"
 import { Room } from "./Room"
+
+/** each view sets how far the atmosphere leans into the frame */
+const VAPOR_BY_VIEW: Record<string, VaporIntensity> = {
+  gate: "cinematic",
+  matching: "heightened",
+  invite: "heightened",
+  room: "quiet",
+  ended: "cinematic",
+}
 
 /**
  * The product shell. One screen at a time — gate, matching, room, or the
@@ -18,7 +31,7 @@ export function ChatApp() {
 
   return (
     <div className="relative flex min-h-svh flex-col">
-      <FogBackground />
+      <VaporField intensity={VAPOR_BY_VIEW[view] ?? "cinematic"} />
 
       <header className="relative z-10 mx-auto flex w-full max-w-2xl items-center justify-between px-6 py-6">
         <a
@@ -28,20 +41,27 @@ export function ChatApp() {
           vapor
           <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-signal align-middle" />
         </a>
-        {session.name && view !== "gate" && (
-          <span className="font-mono text-xs text-fog-dim">
-            you are <span className="text-fog">{session.name}</span>
-          </span>
-        )}
+        <div className="flex items-center gap-4">
+          {/* not on the gate or a doorstep — both are still asking who you are */}
+          {session.name && view !== "gate" && view !== "invite" && (
+            <span className="font-mono text-xs text-fog-dim">
+              you are <span className="text-fog">{session.name}</span>
+            </span>
+          )}
+          <ThemeToggle />
+          <SoundToggle />
+        </div>
       </header>
 
       <main className="relative z-10 flex flex-1 flex-col justify-center pb-10">
         {view === "gate" && <Gate session={session} />}
-        {view === "matching" && <Matching onCancel={session.cancelQueue} />}
+        {view === "matching" && <Matching session={session} />}
+        {view === "invite" && <JoinGate session={session} />}
         {view === "room" && <Room session={session} />}
         {view === "ended" && session.stage.view === "ended" && (
           <Ended
             reason={session.stage.reason}
+            cause={session.stage.cause}
             by={session.stage.by}
             selfName={session.name}
             onBack={session.backToGate}
@@ -52,14 +72,55 @@ export function ChatApp() {
   )
 }
 
+/**
+ * The sound switch: a tiny waveform that flattens when muted. Session-global,
+ * remembered per device. Its label carries the state for screen readers; the
+ * flat line carries it for everyone else — no cue is ever the only signal.
+ */
+function SoundToggle() {
+  const on = useSyncExternalStore(subscribeSound, isSoundOn, () => true)
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={on ? "Sound on — mute cues" : "Sound off — unmute cues"}
+      title={on ? "sound on" : "sound off"}
+      onClick={() => setSoundOn(!on)}
+      className="group flex cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-signal/40"
+    >
+      <span aria-hidden="true" className="flex h-3.5 items-center gap-[2.5px]">
+        {[7, 12, 5, 10, 6].map((h, i) => (
+          <span
+            key={i}
+            className={`w-px rounded-full transition-all duration-500 ${
+              on ? "bg-signal/70" : "bg-fog-dim"
+            }`}
+            style={{ height: on ? `${h}px` : "1.5px" }}
+          />
+        ))}
+      </span>
+      <span
+        className={`font-mono text-[10px] uppercase tracking-[0.2em] transition-colors duration-500 ${
+          on ? "text-fog" : "text-fog-dim"
+        }`}
+      >
+        {on ? "snd" : "mute"}
+      </span>
+    </button>
+  )
+}
+
 /** the moment after: a room existed, and now it doesn't — for everyone */
 function Ended({
   reason,
+  cause,
   by,
   selfName,
   onBack,
 }: {
   reason: string
+  cause: EndCause
   by?: string
   selfName: string | null
   onBack: () => void
@@ -83,10 +144,15 @@ function Ended({
     { scope: ref }
   )
 
+  // who did what: vaporized (deliberate), left, or just dropped off the air
   const byLine = by
     ? by === selfName
-      ? "You ended it. Clean exit."
-      : `${by} ended it. Nothing lingers.`
+      ? "You vaporized it. Clean exit."
+      : cause === "vaporized"
+        ? `${by} vaporized it. Nothing lingers.`
+        : cause === "disconnected"
+          ? `${by} lost their signal and never came back.`
+          : `${by} left. Nothing lingers.`
     : null
 
   return (

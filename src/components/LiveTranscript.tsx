@@ -63,7 +63,7 @@ export function LiveTranscript() {
     <div
       ref={ref}
       aria-hidden="true"
-      className="relative rounded-md border border-fog/15 bg-smoke/55 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.8)] backdrop-blur-xl"
+      className="relative rounded-md border border-fog/15 bg-smoke/55 shadow-[var(--shadow-panel)] backdrop-blur-xl"
     >
       {/* room header */}
       <div className="flex items-center justify-between border-b border-fog/10 px-5 py-3.5">

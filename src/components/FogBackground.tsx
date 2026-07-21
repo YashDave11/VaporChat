@@ -50,15 +50,15 @@ export function FogBackground() {
     >
       <div
         data-fog="a"
-        className="fog-blob left-[-10%] top-[-15%] h-[55vh] w-[55vw] bg-[#1a2230]/60"
+        className="fog-blob left-[-10%] top-[-15%] h-[55vh] w-[55vw] bg-[var(--fog-blob-a)]"
       />
       <div
         data-fog="b"
-        className="fog-blob right-[-15%] top-[20%] h-[60vh] w-[45vw] bg-[#131a1e]/70"
+        className="fog-blob right-[-15%] top-[20%] h-[60vh] w-[45vw] bg-[var(--fog-blob-b)]"
       />
       <div
         data-fog="c"
-        className="fog-blob bottom-[-25%] left-[25%] h-[50vh] w-[50vw] bg-[#10151c]/60"
+        className="fog-blob bottom-[-25%] left-[25%] h-[50vh] w-[50vw] bg-[var(--fog-blob-c)]"
       />
       {/* faint vertical signal line down the page spine */}
       <div className="absolute left-1/2 top-0 h-full w-px bg-gradient-to-b from-transparent via-fog/8 to-transparent" />
