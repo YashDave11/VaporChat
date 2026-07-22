@@ -102,7 +102,21 @@ io.use((socket, next) => {
 registerHandlers(io)
 
 httpServer.listen(PORT, () => {
-  console.log(`vapor server listening on :${PORT} — in-memory only, no history`)
+  const origins = corsOrigin === false ? "same-origin only" : corsOrigin.join(", ")
+  console.log(`[vapor] listening on :${PORT} — in-memory only, no history`)
+  console.log(`[vapor] env=${IS_PROD ? "production" : "development"}  cors=${origins}`)
+  if (IS_PROD && corsOrigin === false) {
+    console.warn(
+      "[vapor] WARNING: CORS_ORIGIN is unset — the Vercel frontend will be blocked. " +
+        "Set CORS_ORIGIN to your frontend origin(s) in the Render dashboard."
+    )
+  }
+})
+
+// a bound-port failure (e.g. PORT taken) must be loud, not silent
+httpServer.on("error", (err) => {
+  console.error(`[vapor] FATAL: server failed to start on :${PORT} —`, err instanceof Error ? err.message : err)
+  process.exit(1)
 })
 
 // ---- global error safety net ----

@@ -1,0 +1,21 @@
+# Render Blueprint for the Vapor backend (Socket.IO + Express).
+# Optional: you can deploy manually via the dashboard instead (see DEPLOYMENT.md).
+# The frontend is NOT deployed here — it ships to Vercel separately.
+services:
+  - type: web
+    name: vapor-backend
+    runtime: node
+    plan: free
+    # Root of this repo. Server deps only — `tsx` lives in "dependencies" so it
+    # survives NODE_ENV=production pruning; the server runs .ts directly.
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set to your Vercel frontend origin(s). Comma-separate for multiple.
+      # e.g. https://vapor.vercel.app  or  https://vapor.chat,https://www.vapor.chat
+      - key: CORS_ORIGIN
+        sync: false
+      # PORT is injected by Render automatically — do not set it here.
