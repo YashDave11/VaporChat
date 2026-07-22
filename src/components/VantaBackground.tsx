@@ -36,12 +36,17 @@ export function VantaBackground() {
       // on default, default.default, or the _vantaEffect global export
       const mod = vantaModule as Record<string, unknown>
       const dflt = mod.default as Record<string, unknown> | undefined
+      const win = typeof window !== "undefined" ? (window as unknown as Record<string, Record<string, unknown>>) : undefined
       const NET = (
         typeof dflt === "function"
           ? dflt
           : typeof dflt?.default === "function"
             ? dflt.default
-            : mod._vantaEffect
+            : typeof mod._vantaEffect === "function"
+              ? mod._vantaEffect
+              : typeof win?.VANTA === "object" && typeof win.VANTA?.NET === "function"
+                ? win.VANTA.NET
+                : undefined
       ) as ((options: Record<string, unknown>) => { destroy(): void }) | undefined
       if (typeof NET !== "function") {
         console.warn("vanta NET export not found; skipping background")
