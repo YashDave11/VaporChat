@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# environment files — secrets live in Render/Vercel dashboards, never in git
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

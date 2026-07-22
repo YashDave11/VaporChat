@@ -7,6 +7,7 @@ import { HowItWorks } from "@/components/HowItWorks"
 import { Preview } from "@/components/Preview"
 import { FinalCta, Footer } from "@/components/FinalCta"
 import { VantaBackground } from "@/components/VantaBackground"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 // the chat app (and socket.io-client with it) loads only when entered
 const ChatApp = lazy(() =>
@@ -27,29 +28,33 @@ export default function App() {
 
   if (inChat) {
     return (
-      <div className="grain">
-        <Suspense fallback={null}>
-          <ChatApp />
-        </Suspense>
-      </div>
+      <ErrorBoundary>
+        <div className="grain">
+          <Suspense fallback={null}>
+            <ChatApp />
+          </Suspense>
+        </div>
+      </ErrorBoundary>
     )
   }
 
   return (
-    <div className="grain">
-      <VantaBackground />
-      <Nav />
-      <main className="relative z-10">
-        <Hero />
-        <Modes />
-        <Privacy />
-        <HowItWorks />
-        <Preview />
-        <FinalCta />
-      </main>
-      <div className="relative z-10">
-        <Footer />
+    <ErrorBoundary>
+      <div className="grain">
+        <VantaBackground />
+        <Nav />
+        <main className="relative z-10">
+          <Hero />
+          <Modes />
+          <Privacy />
+          <HowItWorks />
+          <Preview />
+          <FinalCta />
+        </main>
+        <div className="relative z-10">
+          <Footer />
+        </div>
       </div>
-    </div>
+    </ErrorBoundary>
   )
 }

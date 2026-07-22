@@ -83,6 +83,7 @@ export type ErrorCode =
   | "NOT_IN_ROOM"
   | "NAME_REQUIRED"
   | "ROOM_NAME_REQUIRED"
+  | "SERVER_ERROR"
 
 /** presence: "away" means recently disconnected, inside the resume window */
 export type PeerStatus = "active" | "away"

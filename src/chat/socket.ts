@@ -7,12 +7,14 @@ let socket: VaporSocket | null = null
 
 /**
  * Lazy singleton: the socket is created the first time the chat app needs it,
- * so the landing page never opens a connection. Same-origin — vite proxies
- * /socket.io in dev.
+ * so the landing page never opens a connection. In dev, vite proxies /socket.io
+ * (same-origin). In production with a split deploy (Vercel frontend + Render
+ * backend), VITE_API_URL points at the backend origin.
  */
 export function getSocket(): VaporSocket {
   if (!socket) {
-    socket = io({ transports: ["websocket", "polling"] })
+    const url = import.meta.env.VITE_API_URL || undefined
+    socket = io(url, { transports: ["websocket", "polling"] })
   }
   return socket
 }

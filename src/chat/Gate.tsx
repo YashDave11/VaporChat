@@ -333,10 +333,10 @@ export function Gate({ session }: { session: ChatSession }) {
                             createKind === o.kind ? "bg-signal" : "bg-fog/30"
                           }`}
                         />
-                        <span className="font-body text-sm font-medium text-breath">
+                        <span className="shrink-0 whitespace-nowrap font-body text-sm font-medium text-breath">
                           {o.label}
                         </span>
-                        <span className="font-mono text-[11px] text-fog-dim">
+                        <span className="min-w-0 truncate font-mono text-[11px] text-fog-dim">
                           {o.hint}
                         </span>
                       </label>

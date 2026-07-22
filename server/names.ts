@@ -4,10 +4,11 @@
  * when nothing survives cleaning; callers decide what that means.
  */
 
-/** strip control chars, collapse whitespace, clamp length */
+/** strip control chars, HTML-significant chars, collapse whitespace, clamp length */
 export function sanitizeName(raw: string, max: number): string {
   return raw
     .replace(/\p{C}/gu, "")
+    .replace(/[<>&"']/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max)

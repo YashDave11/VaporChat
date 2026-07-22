@@ -1,4 +1,4 @@
-import { useRef, useSyncExternalStore } from "react"
+import { useRef, useState, useSyncExternalStore } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import type { EndCause } from "@shared/protocol"
@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/ThemeToggle"
 import { isSoundOn, setSoundOn, subscribeSound } from "@/lib/sound"
 import { useChatSession } from "./useChatSession"
 import { Gate } from "./Gate"
+import { PreChatNotice, hasAcceptedNotice } from "./PreChatNotice"
 import { Matching } from "./Matching"
 import { JoinGate } from "./JoinGate"
 import { Room } from "./Room"
@@ -28,14 +29,20 @@ const VAPOR_BY_VIEW: Record<string, VaporIntensity> = {
 export function ChatApp() {
   const session = useChatSession()
   const view = session.stage.view
+  // read-once acknowledgement — per tab, like the name and the resume token.
+  // A resumed seat or an invite link still passes through it on a fresh tab.
+  const [accepted, setAccepted] = useState(hasAcceptedNotice)
 
   return (
     <div className="relative flex min-h-svh flex-col">
-      <VaporField intensity={VAPOR_BY_VIEW[view] ?? "cinematic"} />
+      <VaporField
+        intensity={accepted ? (VAPOR_BY_VIEW[view] ?? "cinematic") : "cinematic"}
+      />
 
       <header className="relative z-10 mx-auto flex w-full max-w-2xl items-center justify-between px-6 py-6">
         <a
           href="#/"
+          onClick={() => session.backToGate()}
           className="font-display text-lg font-semibold tracking-wide text-breath outline-none focus-visible:ring-2 focus-visible:ring-signal/40"
         >
           vapor
@@ -54,18 +61,29 @@ export function ChatApp() {
       </header>
 
       <main className="relative z-10 flex flex-1 flex-col justify-center pb-10">
-        {view === "gate" && <Gate session={session} />}
-        {view === "matching" && <Matching session={session} />}
-        {view === "invite" && <JoinGate session={session} />}
-        {view === "room" && <Room session={session} />}
-        {view === "ended" && session.stage.view === "ended" && (
-          <Ended
-            reason={session.stage.reason}
-            cause={session.stage.cause}
-            by={session.stage.by}
-            selfName={session.name}
-            onBack={session.backToGate}
+        {!accepted ? (
+          <PreChatNotice
+            onAccept={() => setAccepted(true)}
+            onDecline={() => {
+              window.location.hash = "#/"
+            }}
           />
+        ) : (
+          <>
+            {view === "gate" && <Gate session={session} />}
+            {view === "matching" && <Matching session={session} />}
+            {view === "invite" && <JoinGate session={session} />}
+            {view === "room" && <Room session={session} />}
+            {view === "ended" && session.stage.view === "ended" && (
+              <Ended
+                reason={session.stage.reason}
+                cause={session.stage.cause}
+                by={session.stage.by}
+                selfName={session.name}
+                onBack={session.backToGate}
+              />
+            )}
+          </>
         )}
       </main>
     </div>

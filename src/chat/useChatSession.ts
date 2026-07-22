@@ -348,7 +348,7 @@ export function useChatSession() {
     const onPeerLeft = (p: { name: string }) =>
       dispatch({
         type: "line",
-        line: { type: "sys", id: nextSysId(), text: `${p.name} left` },
+        line: { type: "sys", id: nextSysId(), text: `${p.name} left the room` },
       })
     const onPresence = (p: { peers: PeerInfo[] }) =>
       dispatch({ type: "presence", peers: p.peers })
@@ -444,10 +444,23 @@ export function useChatSession() {
       if (socket.connected) socket.emit("invite:resolve", { token })
     }
     window.addEventListener("hashchange", onHashChange)
+    // explicit page unload / tab close / refresh: leave room / queue
+    const onUnload = () => {
+      if (viewRef.current === "room") {
+        sessionStorage.removeItem(RESUME_KEY)
+        getSocket().emit("room:vaporize")
+      } else if (viewRef.current === "matching") {
+        getSocket().emit("queue:leave")
+      }
+    }
+    window.addEventListener("beforeunload", onUnload)
+    window.addEventListener("pagehide", onUnload)
 
     const timers = typingTimers.current
     return () => {
       window.removeEventListener("hashchange", onHashChange)
+      window.removeEventListener("beforeunload", onUnload)
+      window.removeEventListener("pagehide", onUnload)
       socket.off("session:ready", onReady)
       socket.off("queue:waiting", onWaiting)
       socket.off("queue:count", onCount)
@@ -552,7 +565,15 @@ export function useChatSession() {
       dispatch({ type: "left" })
     }
   }, [])
-  const backToGate = useCallback(() => dispatch({ type: "left" }), [])
+  const backToGate = useCallback(() => {
+    if (viewRef.current === "room") {
+      sessionStorage.removeItem(RESUME_KEY)
+      getSocket().emit("room:vaporize")
+    } else if (viewRef.current === "matching") {
+      getSocket().emit("queue:leave")
+    }
+    dispatch({ type: "left" })
+  }, [])
   const clearError = useCallback(() => dispatch({ type: "clear_error" }), [])
 
   return {

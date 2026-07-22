@@ -82,13 +82,13 @@ async function main() {
   const b = await connect("bram")
 
   const roomNameErr = once<any>(a, "app:error")
-  a.emit("public:create", { roomName: "  " })
+  a.emit("room:create", { kind: "public", roomName: "  " })
   ok(
     (await roomNameErr).code === "ROOM_NAME_REQUIRED",
     "blank public room name rejected"
   )
   const privNameErr = once<any>(a, "app:error")
-  a.emit("private:create", { roomName: "" })
+  a.emit("room:create", { kind: "private", roomName: "" })
   ok(
     (await privNameErr).code === "ROOM_NAME_REQUIRED",
     "blank private room name rejected"
@@ -222,25 +222,25 @@ async function main() {
 
   // ---- 4. private rooms: named, keyed, end-chat for both ----
   const pJoined = once<any>(a, "room:joined")
-  a.emit("private:create", { roomName: "  midnight   channel " })
+  a.emit("room:create", { kind: "private", roomName: "  midnight   channel " })
   const priv = await pJoined
   ok(priv.kind === "private" && typeof priv.key === "string", "private room minted with key")
   ok(priv.title === "midnight channel", "private room name sanitized and kept")
   ok(priv.capacity === 2, "private capacity is 2")
 
   const badKey = once<any>(b, "app:error")
-  b.emit("private:join", { key: "ZZZZ" })
+  b.emit("key:join", { key: "ZZZZ" })
   ok((await badKey).code === "BAD_KEY", "invalid key rejected")
 
   const bPriv = once<any>(b, "room:joined")
-  b.emit("private:join", { key: priv.key.toLowerCase() })
+  b.emit("key:join", { key: priv.key.toLowerCase() })
   const bp = await bPriv
   ok(bp.roomId === priv.roomId, "case-insensitive key join works")
   ok(bp.title === "midnight channel", "joiner sees the creator's room name")
 
   const c = await connect("carol")
   const cFull = once<any>(c, "app:error")
-  c.emit("private:join", { key: priv.key })
+  c.emit("key:join", { key: priv.key })
   ok((await cFull).code === "ROOM_FULL", "third joiner rejected from private room")
 
   // b vaporizes → both sides get room:ended naming b, cause vaporized
@@ -254,7 +254,7 @@ async function main() {
   )
 
   const deadKey = once<any>(c, "app:error")
-  c.emit("private:join", { key: priv.key })
+  c.emit("key:join", { key: priv.key })
   ok((await deadKey).code === "BAD_KEY", "key dies when the chat is ended")
 
   // ---- 5. public rooms + directory ----
@@ -264,7 +264,7 @@ async function main() {
 
   const gJoined = once<any>(a, "room:joined")
   const cDirUpdate = once<any>(c, "directory:update")
-  a.emit("public:create", { roomName: "night shift" })
+  a.emit("room:create", { kind: "public", roomName: "night shift" })
   const pub = await gJoined
   ok(pub.kind === "public" && pub.title === "night shift", "public room carries its creator-chosen name")
   ok(pub.capacity === 10, "public capacity is 10")
@@ -318,7 +318,7 @@ async function main() {
 
   // shareable rooms carry a token; matched strangers never do
   const invJoined = once<any>(a, "room:joined")
-  a.emit("private:create", { roomName: "back channel" })
+  a.emit("room:create", { kind: "private", roomName: "back channel" })
   const invRoom = await invJoined
   ok(
     typeof invRoom.invite === "string" && invRoom.invite.length === 10,
@@ -387,7 +387,7 @@ async function main() {
 
   // public rooms carry invites too, resolving with a live seat count
   const pubInvJoined = once<any>(a, "room:joined")
-  a.emit("public:create", { roomName: "late shift" })
+  a.emit("room:create", { kind: "public", roomName: "late shift" })
   const pubInv = await pubInvJoined
   ok(typeof pubInv.invite === "string", "public room minted with an invite")
   const pubInfo = once<any>(c, "invite:info")
@@ -401,10 +401,10 @@ async function main() {
 
   // ---- 7. presence grace + resume ----
   const dJoined = once<any>(a, "room:joined")
-  a.emit("private:create", { roomName: "thin ice" })
+  a.emit("room:create", { kind: "private", roomName: "thin ice" })
   const graceRoom = await dJoined
   const eJoined = once<any>(b, "room:joined")
-  b.emit("private:join", { key: graceRoom.key })
+  b.emit("key:join", { key: graceRoom.key })
   const eb2 = await eJoined
   const bToken = eb2.resumeToken
 
@@ -464,7 +464,7 @@ async function main() {
 
   // ---- 8. rate limiting ----
   const r1 = once<any>(a, "room:joined")
-  a.emit("private:create", { roomName: "overflow" })
+  a.emit("room:create", { kind: "private", roomName: "overflow" })
   await r1
   const limited = once<any>(a, "app:error")
   for (let i = 0; i < 12; i++) a.emit("room:message", { text: `spam ${i}` })
@@ -474,6 +474,50 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1200)) // let a token refill
   a.emit("room:message", { text: "x".repeat(600) })
   ok((await tooLong).code === "MSG_TOO_LONG", "overlong message rejected")
+
+  // ---- 9. exit & teardown verification ----
+  // 9a. multi-member private-group room: exit one by one
+  const g1 = await connect("g1")
+  const g2 = await connect("g2")
+  const g3 = await connect("g3")
+
+  const g1Joined = once<any>(g1, "room:joined")
+  g1.emit("room:create", { kind: "private-group", roomName: "squad" })
+  const gr = await g1Joined
+
+  const g2Joined = once<any>(g2, "room:joined")
+  const g3Joined = once<any>(g3, "room:joined")
+  g2.emit("key:join", { key: gr.key })
+  g3.emit("key:join", { key: gr.key })
+  await Promise.all([g2Joined, g3Joined])
+
+  // g1 vaporizes -> g2 and g3 receive peer_left for g1
+  const g2SeesG1Left = once<any>(g2, "room:peer_left")
+  const g3SeesG1Left = once<any>(g3, "room:peer_left")
+  g1.emit("room:vaporize")
+  const [l1, l2] = await Promise.all([g2SeesG1Left, g3SeesG1Left])
+  ok(l1.name === "g1" && l2.name === "g1", "remaining group members notified when member 1 leaves")
+
+  // g2 vaporizes -> g3 receives peer_left for g2
+  const g3SeesG2Left = once<any>(g3, "room:peer_left")
+  g2.emit("room:vaporize")
+  ok((await g3SeesG2Left).name === "g2", "remaining group member notified when member 2 leaves")
+
+  // g3 vaporizes -> last member out, key dies
+  g3.emit("room:vaporize")
+  await new Promise((r) => setTimeout(r, 200))
+  const g4 = await connect("g4")
+  const deadGroupKey = once<any>(g4, "app:error")
+  g4.emit("key:join", { key: gr.key })
+  ok((await deadGroupKey).code === "BAD_KEY", "group room and key cleaned up when last member leaves")
+
+  g1.disconnect()
+  g2.disconnect()
+  g3.disconnect()
+  g4.disconnect()
+  a.disconnect()
+  b.disconnect()
+  c.disconnect()
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`)
   process.exit(failures === 0 ? 0 : 1)
