@@ -98,7 +98,8 @@ export function Room({ session }: { session: ChatSession }) {
   const composerError =
     session.error &&
     (session.error.code === "RATE_LIMITED" ||
-      session.error.code === "MSG_TOO_LONG")
+      session.error.code === "MSG_TOO_LONG" ||
+      session.error.code === "ALONE_IN_ROOM")
       ? session.error.message
       : null
 
@@ -124,6 +125,7 @@ export function Room({ session }: { session: ChatSession }) {
       <TypingLine typing={session.typing} />
 
       <Composer
+        alone={alone}
         replyTo={replyTo}
         onCancelReply={cancelReply}
         onSend={send}

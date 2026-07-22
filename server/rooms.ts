@@ -86,6 +86,20 @@ export function isFull(room: Room): boolean {
   return room.members.size >= room.capacity
 }
 
+/** how many seats are currently filled — presence, not capacity */
+export function participantCount(room: Room): number {
+  return room.members.size
+}
+
+/**
+ * True when the sender is the only member present — no one else to hear a
+ * message. Kind-agnostic: it reads the same live membership every room type
+ * uses, so it holds for stranger, private 1v1, public, and private groups.
+ */
+export function isAlone(room: Room): boolean {
+  return room.members.size <= 1
+}
+
 /** id prefixes keep room kinds legible in logs: s-, g-, p-, pg- */
 const KIND_PREFIX = {
   stranger: "s",

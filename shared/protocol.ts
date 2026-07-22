@@ -81,6 +81,8 @@ export type ErrorCode =
   | "MSG_TOO_LONG"
   | "NO_SESSION"
   | "NOT_IN_ROOM"
+  /** sender is the only one in the room — there is no one to hear it */
+  | "ALONE_IN_ROOM"
   | "NAME_REQUIRED"
   | "ROOM_NAME_REQUIRED"
   | "SERVER_ERROR"

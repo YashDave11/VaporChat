@@ -462,10 +462,27 @@ async function main() {
   ok((await aGraceEnded).by === "bram", "resumed member can vaporize the chat")
   b2.disconnect()
 
-  // ---- 8. rate limiting ----
+  // ---- 8. alone guard + rate limiting ----
   const r1 = once<any>(a, "room:joined")
   a.emit("room:create", { kind: "private", roomName: "overflow" })
-  await r1
+  const aRoom = await r1
+
+  // alone in the room: a message is refused before it can be broadcast
+  const aloneErr = once<any>(a, "app:error")
+  const aloneEcho = silence(a, "room:message")
+  a.emit("room:message", { text: "anyone there?" })
+  ok(
+    (await aloneErr).code === "ALONE_IN_ROOM",
+    "cannot send while alone in a room"
+  )
+  ok(await aloneEcho, "an alone message is never echoed or broadcast")
+
+  // a second voice joins by key — now the room is live and messages flow
+  const rl = await connect("rl-peer")
+  const rlJoined = once<any>(rl, "room:joined")
+  rl.emit("key:join", { key: aRoom.key })
+  await rlJoined
+
   const limited = once<any>(a, "app:error")
   for (let i = 0; i < 12; i++) a.emit("room:message", { text: `spam ${i}` })
   ok((await limited).code === "RATE_LIMITED", "burst spam rate limited")
@@ -474,6 +491,7 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1200)) // let a token refill
   a.emit("room:message", { text: "x".repeat(600) })
   ok((await tooLong).code === "MSG_TOO_LONG", "overlong message rejected")
+  rl.disconnect() // tear down the live private room before the next section
 
   // ---- 9. exit & teardown verification ----
   // 9a. multi-member private-group room: exit one by one

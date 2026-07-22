@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 const EMOJI = ["🙂", "😅", "🤍", "👋", "🫥", "🌫️", "🔥", "💭"] as const
 
 export const Composer = memo(function Composer({
+  alone,
   replyTo,
   onCancelReply,
   onSend,
@@ -18,6 +19,8 @@ export const Composer = memo(function Composer({
   errorText,
   onClearError,
 }: {
+  /** the only one in the room — nothing can be sent until someone joins */
+  alone: boolean
   replyTo: ReplyRef | null
   onCancelReply: () => void
   onSend: (text: string, replyTo?: ReplyRef) => void
@@ -78,6 +81,7 @@ export const Composer = memo(function Composer({
   }, [])
 
   const send = () => {
+    if (alone) return // nobody to hear it — the server would refuse anyway
     const body = text.trim()
     if (!body) return
     stopTyping() // the message itself is the signal now
@@ -107,6 +111,12 @@ export const Composer = memo(function Composer({
       {errorText && (
         <p role="alert" className="pb-2 font-mono text-[11px] text-fog">
           {errorText}
+        </p>
+      )}
+
+      {alone && !errorText && (
+        <p role="status" className="pb-2 font-mono text-[11px] text-fog-dim">
+          Someone else has to join before you can chat.
         </p>
       )}
 
@@ -164,8 +174,9 @@ export const Composer = memo(function Composer({
           type="button"
           aria-label="Add emoji"
           aria-expanded={emojiOpen}
+          disabled={alone}
           onClick={() => setEmojiOpen((v) => !v)}
-          className="flex h-11 w-10 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-fog/20 text-fog transition-colors duration-300 outline-none hover:border-fog/50 hover:text-breath focus-visible:ring-2 focus-visible:ring-signal/40"
+          className="flex h-11 w-10 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-fog/20 text-fog transition-colors duration-300 outline-none hover:border-fog/50 hover:text-breath focus-visible:ring-2 focus-visible:ring-signal/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-fog/20 disabled:hover:text-fog"
         >
           <span aria-hidden="true" className="text-base leading-none">☺</span>
         </button>
@@ -174,6 +185,7 @@ export const Composer = memo(function Composer({
           ref={inputRef}
           rows={1}
           value={text}
+          disabled={alone}
           onChange={(e) => {
             const next = e.target.value.slice(0, LIMITS.MESSAGE_MAX)
             setText(next)
@@ -182,13 +194,13 @@ export const Composer = memo(function Composer({
             autosize()
           }}
           onKeyDown={onKeyDown}
-          placeholder="say something"
+          placeholder={alone ? "waiting for someone to join…" : "say something"}
           aria-label="Message"
           autoComplete="off"
-          className="min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-fog/20 bg-smoke/60 px-4 py-2.5 font-body text-[15px] leading-relaxed text-breath placeholder:text-fog-dim outline-none transition-colors duration-300 focus:border-signal/50 focus-visible:ring-2 focus-visible:ring-signal/40"
+          className="min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-fog/20 bg-smoke/60 px-4 py-2.5 font-body text-[15px] leading-relaxed text-breath placeholder:text-fog-dim outline-none transition-colors duration-300 focus:border-signal/50 focus-visible:ring-2 focus-visible:ring-signal/40 disabled:cursor-not-allowed disabled:opacity-60"
         />
 
-        <Button type="submit" size="default" disabled={!text.trim()}>
+        <Button type="submit" size="default" disabled={alone || !text.trim()}>
           Send
         </Button>
       </form>
