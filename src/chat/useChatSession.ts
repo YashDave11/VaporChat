@@ -525,7 +525,7 @@ export function useChatSession() {
     (roomId: string) => getSocket().emit("public:join", { roomId }),
     []
   )
-  /** a key opens whichever keyed room minted it — 1v1 chat or private group */
+  /** a key opens whichever keyed room minted it — 1v1 chat or private room */
   const joinByKey = useCallback(
     (key: string) => getSocket().emit("key:join", { key }),
     []

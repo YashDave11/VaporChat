@@ -33,7 +33,7 @@ const CHANNELS: { id: Channel; freq: string; name: string; desc: string }[] = [
     id: "create",
     freq: "CH·03",
     name: "Create a Room",
-    desc: "Host a conversation — open to anyone, private for a group, or one-to-one behind a key.",
+    desc: "Host a conversation — open to anyone, private for a room, or one-to-one behind a key.",
   },
   {
     id: "key",
@@ -57,22 +57,22 @@ const CREATE_OPTIONS: {
 }[] = [
   {
     kind: "public",
-    label: "Public group",
+    label: "Public room",
     hint: "visible in open rooms · anyone can join · up to ten",
     placeholder: "what's it about?",
     action: "Create Public Room",
   },
   {
     kind: "private-group",
-    label: "Private group",
-    hint: "hidden from open rooms · join by link or key · up to ten",
+    label: "Private room",
+    hint: "hidden from open rooms · join by invite or key · up to ten",
     placeholder: "name your circle",
     action: "Create Private Room",
   },
   {
     kind: "private",
     label: "Private chat",
-    hint: "one-to-one · join by link or key",
+    hint: "one-to-one · join by invite or key",
     placeholder: "name this conversation",
     action: "Create Private Chat",
   },

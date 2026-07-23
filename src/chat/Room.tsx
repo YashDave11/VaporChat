@@ -27,7 +27,7 @@ export function Room({ session }: { session: ChatSession }) {
   const ref = useRef<HTMLDivElement>(null)
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  // a freshly created private group opens on its own invite panel — the
+  // a freshly created private room opens on its own invite panel — the
   // link and key ARE the success state; there is no other way anyone arrives
   const [shareOpen, setShareOpen] = useState(
     () => room?.kind === "private-group" && room.peers.length === 0
