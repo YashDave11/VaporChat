@@ -27,3 +27,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Android native wrapper — build artifacts and local SDK paths
+android/
