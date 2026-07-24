@@ -3,11 +3,7 @@ import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import type { RoomJoined } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
-
-/** the full join URL this room's invite token resolves to */
-function inviteUrl(token: string): string {
-  return `${window.location.origin}${window.location.pathname}#/join/${token}`
-}
+import { inviteUrl } from "@/lib/urls"
 
 /** the panel's words per room kind — stated once, no branching in the JSX */
 const SHARE_COPY: Record<

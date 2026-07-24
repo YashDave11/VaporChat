@@ -444,23 +444,21 @@ export function useChatSession() {
       if (socket.connected) socket.emit("invite:resolve", { token })
     }
     window.addEventListener("hashchange", onHashChange)
-    // explicit page unload / tab close / refresh: leave room / queue
-    const onUnload = () => {
-      if (viewRef.current === "room") {
-        sessionStorage.removeItem(RESUME_KEY)
-        getSocket().emit("room:vaporize")
-      } else if (viewRef.current === "matching") {
-        getSocket().emit("queue:leave")
+    // Mobile share sheets and app switches can trigger pagehide/beforeunload.
+    // Never interpret that as an intentional exit: in a 1:1 room that used to
+    // vaporize the conversation while its owner was merely sending an invite.
+    // A real connection loss is held by the server's resume grace period.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !socket.connected) {
+        socket.connect()
       }
     }
-    window.addEventListener("beforeunload", onUnload)
-    window.addEventListener("pagehide", onUnload)
+    document.addEventListener("visibilitychange", onVisibilityChange)
 
     const timers = typingTimers.current
     return () => {
       window.removeEventListener("hashchange", onHashChange)
-      window.removeEventListener("beforeunload", onUnload)
-      window.removeEventListener("pagehide", onUnload)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
       socket.off("session:ready", onReady)
       socket.off("queue:waiting", onWaiting)
       socket.off("queue:count", onCount)

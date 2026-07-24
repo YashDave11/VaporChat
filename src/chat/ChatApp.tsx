@@ -5,6 +5,7 @@ import type { EndCause } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
 import { VaporField, type VaporIntensity } from "@/components/VaporField"
 import { ThemeToggle } from "@/components/ThemeToggle"
+import { MobileAppPrompt } from "@/components/MobileAppPrompt"
 import { isSoundOn, setSoundOn, subscribeSound } from "@/lib/sound"
 import { useChatSession } from "./useChatSession"
 import { Gate } from "./Gate"
@@ -86,6 +87,7 @@ export function ChatApp() {
           </>
         )}
       </main>
+      <MobileAppPrompt />
     </div>
   )
 }
