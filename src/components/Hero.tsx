@@ -3,6 +3,7 @@ import gsap from "gsap"
 import { ScrollTrigger } from "gsap/ScrollTrigger"
 import { useGSAP } from "@gsap/react"
 import { Button } from "@/components/ui/button"
+import { DownloadAndroidButton } from "@/components/AndroidDownloadModal"
 import { FogBackground } from "@/components/FogBackground"
 import { LiveTranscript } from "@/components/LiveTranscript"
 
@@ -41,7 +42,7 @@ export function Hero() {
           )
           .from(
             "[data-hero-sub], [data-hero-cta]",
-            { opacity: 0, y: 12, duration: 0.7, stagger: 0.08 },
+            { opacity: 0, y: 12, duration: 0.7, stagger: 0.08, clearProps: "transform,filter" },
             "-=0.3"
           )
           .from(
@@ -139,23 +140,28 @@ export function Hero() {
               happened.
             </p>
 
-            <div className="mt-9 flex flex-wrap items-start gap-4">
-              <div data-hero-cta className="flex flex-col items-start gap-2">
-                <Button size="lg" onClick={() => (window.location.hash = "#/chat")}>
-                  Start chatting
-                </Button>
-                <span className="pl-0.5 font-mono text-[11px] text-fog-dim">
-                  free · no account · you&rsquo;re in before you can blink
-                </span>
+            <div className="mt-9 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-4">
+                <div data-hero-cta className="w-full sm:w-auto">
+                  <Button
+                    size="lg"
+                    className="w-full sm:w-auto"
+                    onClick={() => (window.location.hash = "#/chat")}
+                  >
+                    Start chatting
+                  </Button>
+                </div>
+                <div data-hero-cta className="w-full sm:w-auto">
+                  <DownloadAndroidButton
+                    variant="ghost"
+                    size="lg"
+                    className="w-full sm:w-auto"
+                  />
+                </div>
               </div>
-              <Button
-                data-hero-cta
-                variant="ghost"
-                size="lg"
-                onClick={() => (window.location.hash = "#/chat")}
-              >
-                Start a private chat
-              </Button>
+              <span data-hero-sub className="pl-0.5 font-mono text-[11px] text-fog-dim">
+                free · no account · you&rsquo;re in before you can blink
+              </span>
             </div>
           </div>
 
