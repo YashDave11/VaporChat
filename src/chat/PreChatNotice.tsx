@@ -58,10 +58,9 @@ const SIGNALS: { tag: string; name: string; desc: string }[] = [
  */
 export function PreChatNotice({
   onAccept,
-  onDecline,
 }: {
   onAccept: () => void
-  onDecline: () => void
+  onDecline?: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -129,11 +128,8 @@ export function PreChatNotice({
 
       <div
         data-notice-item
-        className="mt-10 flex flex-wrap items-center justify-between gap-4"
+        className="mt-10 flex flex-wrap items-center justify-end gap-4"
       >
-        <Button variant="bare" onClick={onDecline}>
-          Go back
-        </Button>
         <Button onClick={accept}>I understand — start chatting</Button>
       </div>
 

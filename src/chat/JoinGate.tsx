@@ -1,4 +1,4 @@
-import { useState, useRef, useId } from "react"
+import { useState, useRef, useId, useEffect } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import { Button } from "@/components/ui/button"
@@ -69,6 +69,28 @@ function Resolving() {
   )
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false
+    const uaMobile = /android|iphone|ipad|ipod|mobile|touch|webos/i.test(navigator.userAgent)
+    const screenMobile = window.innerWidth < 768
+    return uaMobile || screenMobile
+  })
+
+  useEffect(() => {
+    const update = () => {
+      const uaMobile = /android|iphone|ipad|ipod|mobile|touch|webos/i.test(navigator.userAgent)
+      const screenMobile = window.innerWidth < 768
+      setIsMobile(uaMobile || screenMobile)
+    }
+    update()
+    window.addEventListener("resize", update)
+    return () => window.removeEventListener("resize", update)
+  }, [])
+
+  return isMobile
+}
+
 /** a valid link: the room, stated plainly, and one field between you and it */
 function Doorstep({
   invite,
@@ -83,6 +105,21 @@ function Doorstep({
   const nameRef = useRef<HTMLInputElement>(null)
   const ref = useRef<HTMLDivElement>(null)
   const fieldId = useId()
+
+  const isMobile = useIsMobile()
+  const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent)
+  const appUrl = isAndroid
+    ? `intent://join/${encodeURIComponent(info.token)}#Intent;scheme=vapor;package=chat.vapor;end`
+    : `vapor://join/${encodeURIComponent(info.token)}`
+
+  useEffect(() => {
+    if (isAndroid && isMobile) {
+      const timer = setTimeout(() => {
+        window.location.href = appUrl
+      }, 400)
+      return () => clearTimeout(timer)
+    }
+  }, [info.token, isAndroid, isMobile, appUrl])
 
   useGSAP(
     () => {
@@ -144,6 +181,17 @@ function Doorstep({
           <> · {info.count}/{info.capacity} seats</>
         )}
       </p>
+
+      {isMobile && (
+        <div data-door-line className="mt-6 block md:hidden">
+          <a
+            href={appUrl}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-sm border border-signal/40 bg-signal/10 px-4 py-3 font-mono text-xs font-medium uppercase tracking-widest text-signal shadow-sm transition-colors hover:bg-signal/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40"
+          >
+            📱 Open in App
+          </a>
+        </div>
+      )}
 
       <form
         data-door-line
