@@ -186,7 +186,7 @@ architecture 1:1 — `ChatViewModel.kt` ports `useChatSession.ts`, `Protocol.kt`
 Requires **JDK 17–21** (not 24) and **compileSdk 34** with AGP 8.5.2.
 
 ```bash
-export JAVA_HOME="$HOME/.gradle/jdks/eclipse_adoptium-17-amd64-windows.2"
+export JAVA_HOME=/path/to/jdk-17   # any JDK 17–21
 gradle -p android :app:assembleDebug
 # → android/app/build/outputs/apk/debug/app-debug.apk
 ```
