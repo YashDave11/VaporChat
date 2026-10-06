@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import type { CallMode, CallState, CallSignal } from "@shared/protocol"
+import type { CallState, CallSignal } from "@shared/protocol"
 import { getSocket } from "./socket"
 import { playCue } from "@/lib/sound"
 
@@ -22,7 +22,6 @@ const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 interface PeerConnectionBundle {
   pc: RTCPeerConnection
   remoteStream: MediaStream
-  audioEl?: HTMLAudioElement
   pendingCandidates: RTCIceCandidateInit[]
 }
 
@@ -30,17 +29,13 @@ export interface WebRTCController {
   inCall: boolean
   isStarting: boolean
   isMuted: boolean
-  videoEnabled: boolean
-  mode: CallMode
-  localStream: MediaStream | null
   remoteStreams: Map<string, MediaStream>
   speakingPeers: Set<string>
   callDuration: number
   error: string | null
-  startCall: (mode: CallMode) => Promise<void>
+  startCall: () => Promise<void>
   leaveCall: () => void
   toggleMute: () => void
-  toggleVideo: () => Promise<void>
   clearError: () => void
 }
 
@@ -48,9 +43,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   const [inCall, setInCall] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
-  const [videoEnabled, setVideoEnabled] = useState(false)
-  const [mode, setMode] = useState<CallMode>("audio")
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
   const [speakingPeers, setSpeakingPeers] = useState<Set<string>>(new Set())
   const [callDuration, setCallDuration] = useState(0)
@@ -63,9 +55,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
   const isMutedRef = useRef(false)
   isMutedRef.current = isMuted
-
-  const videoEnabledRef = useRef(false)
-  videoEnabledRef.current = videoEnabled
 
   // Web Audio analyzer for speaking detection
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -108,7 +97,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       const speaking = new Set<string>()
 
       // Check local user (if not muted)
-      if (localAnalyserRef.current && !isMutedRef.current) {
+      if (!isMutedRef.current && localAnalyserRef.current) {
         localAnalyserRef.current.getByteFrequencyData(dataArray)
         let sum = 0
         for (let i = 0; i < dataArray.length; i++) sum += dataArray[i]
@@ -116,7 +105,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
         if (avg > 14) speaking.add("local")
       }
 
-      // Check remote peers
+      // Check remote users
       remoteAnalysersRef.current.forEach((analyser, peerId) => {
         analyser.getByteFrequencyData(dataArray)
         let sum = 0
@@ -179,14 +168,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       pc.addTransceiver("audio", { direction: "sendrecv" })
     }
 
-    // Attach local video track or add video transceiver so SDP m=video is always negotiated
-    const videoTrack = localStreamRef.current?.getVideoTracks()[0]
-    if (videoTrack) {
-      pc.addTrack(videoTrack, localStreamRef.current!)
-    } else {
-      pc.addTransceiver("video", { direction: "sendrecv" })
-    }
-
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate && event.candidate.candidate) {
@@ -205,7 +186,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
     }
 
-    // Handle incoming remote media tracks (supports both event.track and event.streams)
+    // Handle incoming remote media tracks
     pc.ontrack = (event) => {
       if (event.track) {
         if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
@@ -220,7 +201,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
         })
       }
 
-      // Also gather any tracks from all active receivers on this peer connection
       pc.getReceivers().forEach((receiver) => {
         if (receiver.track && !remoteStream.getTracks().some((t) => t.id === receiver.track.id)) {
           remoteStream.addTrack(receiver.track)
@@ -229,7 +209,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
       attachRemoteAnalyser(peerId, remoteStream)
 
-      // Provide updated stream to state so video and audio elements re-render/detect
       setRemoteStreams((prev) => {
         const updated = new Map(prev)
         updated.set(peerId, remoteStream)
@@ -239,8 +218,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-        bundle.audioEl?.pause()
-        if (bundle.audioEl) bundle.audioEl.srcObject = null
+        remoteAnalysersRef.current.delete(peerId)
       }
     }
 
@@ -257,8 +235,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
     // Stop and clean up all peer connections
     peersRef.current.forEach((bundle) => {
-      bundle.audioEl?.pause()
-      if (bundle.audioEl) bundle.audioEl.srcObject = null
       bundle.pc.close()
     })
     peersRef.current.clear()
@@ -270,7 +246,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop())
       localStreamRef.current = null
-      setLocalStream(null)
     }
 
     setRemoteStreams(new Map())
@@ -278,54 +253,51 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     setInCall(false)
     setIsStarting(false)
     setIsMuted(false)
-    setVideoEnabled(false)
 
     playCue("call_leave")
     getSocket().emit("call:leave")
   }, [])
 
-  // Start / join call
-  const startCall = useCallback(
-    async (callMode: CallMode) => {
-      setIsStarting(true)
-      setError(null)
-      try {
-        ensureAudioContext()
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: AUDIO_CONSTRAINTS,
-          video: callMode === "video" ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } } : false,
-        })
+  // Start / join call (voice only)
+  const startCall = useCallback(async () => {
+    setIsStarting(true)
+    setError(null)
+    try {
+      ensureAudioContext()
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: AUDIO_CONSTRAINTS,
+        video: false,
+      })
 
-        localStreamRef.current = stream
-        setLocalStream(stream)
-        setMode(callMode)
-        setIsMuted(false)
-        setVideoEnabled(callMode === "video")
-        setInCall(true)
+      localStreamRef.current = stream
+      setIsMuted(false)
+      setInCall(true)
 
-        // Connect local audio analyser
-        const actx = ensureAudioContext()
-        if (actx) {
-          const source = actx.createMediaStreamSource(stream)
-          const analyser = actx.createAnalyser()
-          analyser.fftSize = 64
-          analyser.smoothingTimeConstant = 0.4
-          source.connect(analyser)
-          localAnalyserRef.current = analyser
-        }
-
-        playCue("call_join")
-        getSocket().emit("call:join", { mode: callMode })
-        startVolumeDetection()
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Media device access denied"
-        setError(message.includes("Permission") || message.includes("denied") ? "Microphone access was denied. Please allow audio access in your browser." : "Could not connect to microphone/camera.")
-      } finally {
-        setIsStarting(false)
+      // Connect local audio analyser
+      const actx = ensureAudioContext()
+      if (actx) {
+        const source = actx.createMediaStreamSource(stream)
+        const analyser = actx.createAnalyser()
+        analyser.fftSize = 64
+        analyser.smoothingTimeConstant = 0.4
+        source.connect(analyser)
+        localAnalyserRef.current = analyser
       }
-    },
-    [ensureAudioContext, startVolumeDetection]
-  )
+
+      playCue("call_join")
+      getSocket().emit("call:join")
+      startVolumeDetection()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Media device access denied"
+      setError(
+        message.includes("Permission") || message.includes("denied")
+          ? "Microphone access was denied. Please allow audio access in your browser."
+          : "Could not connect to microphone."
+      )
+    } finally {
+      setIsStarting(false)
+    }
+  }, [ensureAudioContext, startVolumeDetection])
 
   // Toggle mute
   const toggleMute = useCallback(() => {
@@ -337,95 +309,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     setIsMuted(next)
     getSocket().emit("call:state_update", {
       muted: next,
-      videoEnabled: videoEnabledRef.current,
     })
-  }, [])
-
-  // Toggle video with track replacement and renegotiation
-  const toggleVideo = useCallback(async () => {
-    if (!localStreamRef.current) return
-    const next = !videoEnabledRef.current
-
-    if (next) {
-      try {
-        const videoStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
-        })
-        const newTrack = videoStream.getVideoTracks()[0]
-        if (newTrack) {
-          // Clean up old video tracks if any
-          localStreamRef.current.getVideoTracks().forEach((track) => {
-            track.stop()
-            localStreamRef.current?.removeTrack(track)
-          })
-
-          localStreamRef.current.addTrack(newTrack)
-          setLocalStream(new MediaStream(localStreamRef.current.getTracks()))
-
-          // Route to all active peer connections
-          peersRef.current.forEach(async ({ pc }, peerId) => {
-            let videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
-            if (videoSender) {
-              await videoSender.replaceTrack(newTrack)
-            } else {
-              videoSender = pc.addTrack(newTrack, localStreamRef.current!)
-            }
-
-            const videoTransceiver = pc.getTransceivers().find(
-              (t) => t.sender === videoSender || t.receiver.track?.kind === "video"
-            )
-            if (videoTransceiver && videoTransceiver.direction !== "sendrecv") {
-              videoTransceiver.direction = "sendrecv"
-            }
-
-            // Renegotiate offer so remote peer's camera feed activates
-            try {
-              const offer = await pc.createOffer()
-              await pc.setLocalDescription(offer)
-              getSocket().emit("call:signal", {
-                to: peerId,
-                signal: {
-                  type: "offer",
-                  sdp: { type: offer.type, sdp: offer.sdp },
-                },
-              })
-            } catch {
-              // ignore
-            }
-          })
-
-          setVideoEnabled(true)
-          setMode("video")
-          getSocket().emit("call:state_update", {
-            muted: isMutedRef.current,
-            videoEnabled: true,
-          })
-        }
-      } catch {
-        setError("Camera permission denied or camera unavailable.")
-      }
-    } else {
-      // Turn video off
-      const videoTracks = localStreamRef.current.getVideoTracks()
-      videoTracks.forEach((track) => {
-        track.stop()
-        localStreamRef.current?.removeTrack(track)
-      })
-      setLocalStream(new MediaStream(localStreamRef.current.getTracks()))
-
-      peersRef.current.forEach(({ pc }) => {
-        const videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
-        if (videoSender) {
-          void videoSender.replaceTrack(null)
-        }
-      })
-
-      setVideoEnabled(false)
-      getSocket().emit("call:state_update", {
-        muted: isMutedRef.current,
-        videoEnabled: false,
-      })
-    }
   }, [])
 
   const clearError = useCallback(() => setError(null), [])
@@ -446,7 +330,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       if (signal.type === "offer") {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp as RTCSessionDescriptionInit))
-          // Flush pending candidates
           while (bundle.pendingCandidates.length > 0) {
             const cand = bundle.pendingCandidates.shift()
             if (cand) {
@@ -538,7 +421,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
     })
 
-    // Sync any newly available tracks from receivers into remoteStreams
+    // Sync any newly available audio tracks from receivers
     peersRef.current.forEach((bundle, peerId) => {
       let changed = false
       bundle.pc.getReceivers().forEach((receiver) => {
@@ -559,8 +442,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     // Clean up peers who left the call
     peersRef.current.forEach((bundle, peerId) => {
       if (!memberIds.has(peerId)) {
-        bundle.audioEl?.pause()
-        if (bundle.audioEl) bundle.audioEl.srcObject = null
         bundle.pc.close()
         peersRef.current.delete(peerId)
         remoteAnalysersRef.current.delete(peerId)
@@ -590,9 +471,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     inCall,
     isStarting,
     isMuted,
-    videoEnabled,
-    mode,
-    localStream,
     remoteStreams,
     speakingPeers,
     callDuration,
@@ -600,7 +478,6 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     startCall,
     leaveCall,
     toggleMute,
-    toggleVideo,
     clearError,
   }
 }

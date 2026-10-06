@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import type { RoomJoined, ReplyRef, PeerInfo, CallMode, CallState } from "@shared/protocol"
+import type { RoomJoined, ReplyRef, PeerInfo, CallState } from "@shared/protocol"
 import { ROOM_RULES } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
 import type { ChatSession } from "./useChatSession"
@@ -9,7 +9,6 @@ import { MessageList } from "./MessageList"
 import { Composer } from "./Composer"
 import { SharePanel } from "./SharePanel"
 import { CallDock } from "./CallDock"
-import { CallPromptModal } from "./CallPromptModal"
 import { IncomingCallModal } from "./IncomingCallModal"
 import { useWebRTC } from "./useWebRTC"
 
@@ -27,7 +26,6 @@ export function Room({ session }: { session: ChatSession }) {
   const ref = useRef<HTMLDivElement>(null)
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [callPromptOpen, setCallPromptOpen] = useState(false)
   const [dismissedCallKey, setDismissedCallKey] = useState<string | null>(null)
 
   const rtc = useWebRTC(session.callState, session.stage.view === "room")
@@ -111,20 +109,8 @@ export function Room({ session }: { session: ChatSession }) {
   const closeShare = useCallback(() => setShareOpen(false), [])
 
   const onStartVoiceCall = useCallback(() => {
-    void rtc.startCall("audio")
+    void rtc.startCall()
   }, [rtc])
-
-  const onStartVideoCall = useCallback(() => {
-    void rtc.startCall("video")
-  }, [rtc])
-
-  const onStartFromPrompt = useCallback(
-    (chosenMode: CallMode) => {
-      setCallPromptOpen(false)
-      void rtc.startCall(chosenMode)
-    },
-    [rtc]
-  )
 
   // Track other members in an active call
   const otherCallMembers = session.callState.members.filter(
@@ -148,19 +134,11 @@ export function Room({ session }: { session: ChatSession }) {
     dismissedCallKey !== activeCallKey
 
   const incomingCaller = otherCallMembers[0]
-  const incomingMode: CallMode = otherCallMembers.some(
-    (m) => m.mode === "video" || m.videoEnabled
-  )
-    ? "video"
-    : "audio"
 
-  const onAcceptIncomingCall = useCallback(
-    (chosenMode: CallMode) => {
-      setDismissedCallKey(null)
-      void rtc.startCall(chosenMode)
-    },
-    [rtc]
-  )
+  const onAcceptIncomingCall = useCallback(() => {
+    setDismissedCallKey(null)
+    void rtc.startCall()
+  }, [rtc])
 
   const onDeclineIncomingCall = useCallback(() => {
     setDismissedCallKey(activeCallKey)
@@ -203,7 +181,6 @@ export function Room({ session }: { session: ChatSession }) {
         callState={session.callState}
         inCall={rtc.inCall}
         onStartVoiceCall={onStartVoiceCall}
-        onStartVideoCall={onStartVideoCall}
       />
 
       {rtc.inCall && (
@@ -246,17 +223,9 @@ export function Room({ session }: { session: ChatSession }) {
         <SharePanel room={room} onClose={closeShare} />
       )}
 
-      {callPromptOpen && (
-        <CallPromptModal
-          onStart={onStartFromPrompt}
-          onCancel={() => setCallPromptOpen(false)}
-        />
-      )}
-
       {showIncomingCall && incomingCaller && (
         <IncomingCallModal
           callerName={incomingCaller.name}
-          mode={incomingMode}
           onAccept={onAcceptIncomingCall}
           onDecline={onDeclineIncomingCall}
         />
@@ -297,7 +266,6 @@ function ChatHeader({
   callState,
   inCall,
   onStartVoiceCall,
-  onStartVideoCall,
 }: {
   room: RoomJoined
   peers: PeerInfo[]
@@ -306,7 +274,6 @@ function ChatHeader({
   callState: CallState
   inCall: boolean
   onStartVoiceCall: () => void
-  onStartVideoCall: () => void
 }) {
   const kindLabel = KIND_LABEL[room.kind]
   const group = !ROOM_RULES[room.kind].oneToOne && room.kind !== "stranger"
@@ -358,83 +325,45 @@ function ChatHeader({
           </button>
         )}
 
-        {/* Ephemeral call action buttons */}
+        {/* Ephemeral voice call action button */}
         {inCall ? (
           <span className="flex shrink-0 items-center gap-1.5 rounded-sm border border-signal/40 bg-signal/10 px-2 py-1 font-mono text-[11px] text-signal">
             <span className="h-1.5 w-1.5 rounded-full bg-signal animate-pulse" />
             in call
           </span>
         ) : (
-          <div className="flex items-center gap-1.5">
-            {/* Separate Voice Call Button */}
-            <button
-              type="button"
-              onClick={onStartVoiceCall}
-              title={
-                callState.active
-                  ? `Join voice call (${callState.members.length} in call)`
-                  : "Start ephemeral voice call"
-              }
-              className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
-                callState.active
-                  ? "border-signal/50 bg-signal/10 text-signal hover:bg-signal/20"
-                  : "border-fog/20 bg-smoke text-fog hover:border-signal/40 hover:text-signal"
-              }`}
+          <button
+            type="button"
+            onClick={onStartVoiceCall}
+            title={
+              callState.active
+                ? `Join voice call (${callState.members.length} in call)`
+                : "Start ephemeral voice call"
+            }
+            className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+              callState.active
+                ? "border-signal/50 bg-signal/10 text-signal hover:bg-signal/20"
+                : "border-fog/20 bg-smoke text-fog hover:border-signal/40 hover:text-signal"
+            }`}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className="shrink-0 transition-transform duration-300 group-hover:scale-110"
             >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-                className="shrink-0 transition-transform duration-300 group-hover:scale-110"
-              >
-                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-              </svg>
-              <span className="hidden xs:inline">
-                {callState.active ? "join voice" : "voice"}
-              </span>
-            </button>
-
-            {/* Separate Video Call Button */}
-            <button
-              type="button"
-              onClick={onStartVideoCall}
-              title={
-                callState.active
-                  ? `Join video call (${callState.members.length} in call)`
-                  : "Start ephemeral video call"
-              }
-              className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
-                callState.active && callState.members.some((m) => m.videoEnabled)
-                  ? "border-signal/50 bg-signal/15 text-signal hover:bg-signal/25"
-                  : "border-fog/20 bg-smoke text-fog hover:border-signal/40 hover:text-signal"
-              }`}
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-                className="shrink-0 transition-transform duration-300 group-hover:scale-110"
-              >
-                <polygon points="23 7 16 12 23 17 23 7" />
-                <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-              </svg>
-              <span className="hidden xs:inline">
-                {callState.active ? "join video" : "video"}
-              </span>
-            </button>
-          </div>
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+            </svg>
+            <span className="hidden xs:inline">
+              {callState.active ? "join call" : "call"}
+            </span>
+          </button>
         )}
       </div>
       <div className="flex items-center gap-3 sm:gap-4">

@@ -541,20 +541,20 @@ async function main() {
 
   // ca joins call
   const cbSeesCallState1 = once<any>(cb, "call:state")
-  ca.emit("call:join", { mode: "audio" })
+  ca.emit("call:join")
   const cs1 = await cbSeesCallState1
   ok(cs1.active && cs1.members.length === 1 && cs1.members[0].name === "ca", "peer sees call active when member joins")
 
   // cb joins call — both sides receive the update
   const caSeesCallState2 = once<any>(ca, "call:state")
   const cbSeesCallState2 = once<any>(cb, "call:state")
-  cb.emit("call:join", { mode: "video" })
+  cb.emit("call:join")
   const [cs2] = await Promise.all([caSeesCallState2, cbSeesCallState2])
   ok(cs2.members.length === 2, "both peers reflected in call state")
 
   // ca updates mute
   const cbSeesCallState3 = once<any>(cb, "call:state")
-  ca.emit("call:state_update", { muted: true, videoEnabled: false })
+  ca.emit("call:state_update", { muted: true })
   const cs3 = await cbSeesCallState3
   const caMember = cs3.members.find((m: any) => m.name === "ca")
   ok(caMember?.muted === true, "mute state update reflected in call state")

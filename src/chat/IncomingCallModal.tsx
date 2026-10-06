@@ -1,26 +1,23 @@
 import { useEffect, useRef } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import type { CallMode } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
 import { playCue } from "@/lib/sound"
 
 interface IncomingCallModalProps {
   callerName: string
-  mode: CallMode
-  onAccept: (mode: CallMode) => void
+  onAccept: () => void
   onDecline: () => void
 }
 
 /**
- * Incoming call alert modal.
- * Pops up when another user in the room initiates an ephemeral voice or video call.
+ * Incoming voice call alert modal.
+ * Pops up when another user in the room initiates an ephemeral voice call.
  * Features Vapor's signature frosted glass, pulsing signal ring, chime playback,
  * and clear accept / decline actions.
  */
 export function IncomingCallModal({
   callerName,
-  mode,
   onAccept,
   onDecline,
 }: IncomingCallModalProps) {
@@ -64,15 +61,13 @@ export function IncomingCallModal({
       if (e.key === "Escape") {
         onDecline()
       } else if (e.key === "Enter" && !e.shiftKey) {
-        onAccept(mode)
+        onAccept()
       }
     }
 
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [mode, onAccept, onDecline])
-
-  const isVideo = mode === "video"
+  }, [onAccept, onDecline])
 
   return (
     <div
@@ -105,7 +100,7 @@ export function IncomingCallModal({
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-signal" />
             </span>
             <span className="font-mono text-[9px] uppercase tracking-[0.25em] text-signal font-medium">
-              {isVideo ? "Incoming Video Call" : "Incoming Voice Call"}
+              Incoming Voice Call
             </span>
           </div>
 
@@ -135,71 +130,29 @@ export function IncomingCallModal({
           </h2>
 
           <p id="incoming-call-desc" className="mt-1 font-mono text-xs text-fog">
-            {isVideo ? "is calling you with video..." : "is calling you..."}
+            is calling you...
           </p>
 
           <p className="mt-1.5 font-mono text-[10px] text-fog-dim">
-            Direct end-to-end stream · unrecorded & ephemeral
+            Direct end-to-end voice stream · unrecorded & ephemeral
           </p>
         </div>
 
         {/* Actions Grid */}
         <div className="flex flex-col gap-2 pt-2 border-t hairline">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {/* Primary accept button */}
-            <Button
-              ref={acceptBtnRef}
-              variant="signal"
-              size="sm"
-              onClick={() => onAccept(mode)}
-              className="flex items-center justify-center gap-2 font-mono text-xs font-semibold cursor-pointer shadow-[0_0_15px_rgba(169,232,220,0.3)]"
-            >
-              {isVideo ? (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <polygon points="23 7 16 12 23 17 23 7" />
-                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                  </svg>
-                  <span>Join Video ↗</span>
-                </>
-              ) : (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-                  </svg>
-                  <span>Join Call ↗</span>
-                </>
-              )}
-            </Button>
-
-            {/* Alternate accept mode (voice if video, or video if voice) */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onAccept(isVideo ? "audio" : "video")}
-              className="flex items-center justify-center gap-1.5 font-mono text-xs cursor-pointer"
-            >
-              {isVideo ? (
-                <>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                    <line x1="12" y1="19" x2="12" y2="23" />
-                    <line x1="8" y1="23" x2="16" y2="23" />
-                  </svg>
-                  <span>Voice only</span>
-                </>
-              ) : (
-                <>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <polygon points="23 7 16 12 23 17 23 7" />
-                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                  </svg>
-                  <span>With video</span>
-                </>
-              )}
-            </Button>
-          </div>
+          {/* Primary accept button */}
+          <Button
+            ref={acceptBtnRef}
+            variant="signal"
+            size="default"
+            onClick={onAccept}
+            className="w-full flex items-center justify-center gap-2 font-mono text-xs font-semibold cursor-pointer shadow-[0_0_15px_rgba(169,232,220,0.3)]"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+            </svg>
+            <span>Join Call ↗</span>
+          </Button>
 
           {/* Decline button */}
           <Button

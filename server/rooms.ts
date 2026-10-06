@@ -276,12 +276,11 @@ export function leaveCall(room: Room, peerId: string): boolean {
 export function updateCallMember(
   room: Room,
   peerId: string,
-  updates: { muted: boolean; videoEnabled: boolean }
+  updates: { muted: boolean }
 ): boolean {
   const m = room.callMembers.get(peerId)
   if (!m) return false
   m.muted = updates.muted
-  m.videoEnabled = updates.videoEnabled
   return true
 }
 

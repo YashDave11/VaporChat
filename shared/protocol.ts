@@ -175,15 +175,11 @@ export interface AppError {
   message: string
 }
 
-/** Ephemeral voice & video call types — WebRTC P2P mesh */
-export type CallMode = "audio" | "video"
-
+/** Ephemeral voice call types — WebRTC P2P audio mesh */
 export interface CallMember {
   peerId: string
   name: string
-  mode: CallMode
   muted: boolean
-  videoEnabled: boolean
 }
 
 export interface CallState {
@@ -235,10 +231,10 @@ export interface ClientToServer {
    */
   "room:vaporize": () => void
 
-  /** ephemeral call actions */
-  "call:join": (p: { mode: CallMode }) => void
+  /** ephemeral voice call actions */
+  "call:join": (p?: { mode?: string }) => void
   "call:leave": () => void
-  "call:state_update": (p: { muted: boolean; videoEnabled: boolean }) => void
+  "call:state_update": (p: { muted: boolean }) => void
   "call:signal": (p: { to: string; signal: CallSignal }) => void
 }
 
