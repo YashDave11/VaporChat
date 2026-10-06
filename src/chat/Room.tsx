@@ -1,17 +1,16 @@
 import { useRef, useState, useCallback, useEffect } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import type { RoomJoined, ReplyRef, PeerInfo } from "@shared/protocol"
+import type { RoomJoined, ReplyRef, PeerInfo, CallMode, CallState } from "@shared/protocol"
 import { ROOM_RULES } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
 import type { ChatSession } from "./useChatSession"
 import { MessageList } from "./MessageList"
 import { Composer } from "./Composer"
 import { SharePanel } from "./SharePanel"
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
-}
+import { CallDock } from "./CallDock"
+import { CallPromptModal } from "./CallPromptModal"
+import { useWebRTC } from "./useWebRTC"
 
 /**
  * The room shell. One column: context bar, transcript, typing line, composer.
@@ -27,13 +26,15 @@ export function Room({ session }: { session: ChatSession }) {
   const ref = useRef<HTMLDivElement>(null)
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [callPromptOpen, setCallPromptOpen] = useState(false)
+
+  const rtc = useWebRTC(session.callState, session.stage.view === "room")
+
   // a freshly created private room opens on its own invite panel — the
   // link and key ARE the success state; there is no other way anyone arrives
   const [shareOpen, setShareOpen] = useState(
     () => room?.kind === "private-group" && room.peers.length === 0
   )
-  /** true while the exit animation is dissolving the panel */
-  const leavingRef = useRef(false)
 
   useGSAP(
     () => {
@@ -52,6 +53,50 @@ export function Room({ session }: { session: ChatSession }) {
     { scope: ref }
   )
 
+  /**
+   * The room ended for everyone — make it visible. The real transcript
+   * evaporates: every bubble lifts, blurs and drifts up (bottom-first), the
+   * surrounding chrome fades with it, and only then does the Ended screen
+   * commit. Reduced motion skips straight to the after-image.
+   */
+  const dissolving = session.dissolving
+  const finishDissolve = session.finishDissolve
+  const dissolvedRef = useRef(false)
+  useGSAP(
+    () => {
+      if (!dissolving || dissolvedRef.current) return
+      dissolvedRef.current = true
+      if (rtc.inCall) rtc.leaveCall()
+
+      const el = ref.current
+      const mm = gsap.matchMedia()
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        if (el) gsap.set(el, { pointerEvents: "none" })
+        const bubbles = gsap.utils.toArray<HTMLElement>(
+          el?.querySelectorAll("[data-mid], [data-sys], [data-call-dock]") ?? []
+        )
+        const tl = gsap.timeline({ onComplete: finishDissolve })
+        if (bubbles.length) {
+          tl.to(bubbles, {
+            y: -28,
+            x: () => gsap.utils.random(-10, 10),
+            opacity: 0,
+            filter: "blur(10px)",
+            duration: 0.9,
+            ease: "power1.in",
+            stagger: { each: 0.03, from: "end" },
+          })
+        }
+        // the chrome (header, typing line, composer) thins out a beat behind
+        tl.to(el, { opacity: 0, duration: 0.8, ease: "power1.in" }, bubbles.length ? 0.25 : 0)
+      })
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        finishDissolve()
+      })
+    },
+    { scope: ref, dependencies: [dissolving] }
+  )
+
   const { sendMessage, sendTyping, vaporize, clearError } = session
   const cancelReply = useCallback(() => setReplyTo(null), [])
   const send = useCallback(
@@ -63,34 +108,30 @@ export function Room({ session }: { session: ChatSession }) {
   const openShare = useCallback(() => setShareOpen(true), [])
   const closeShare = useCallback(() => setShareOpen(false), [])
 
+  const onQuickJoinCall = useCallback(() => {
+    void rtc.startCall("audio")
+  }, [rtc])
+
+  const onStartFromPrompt = useCallback(
+    (chosenMode: CallMode) => {
+      setCallPromptOpen(false)
+      void rtc.startCall(chosenMode)
+    },
+    [rtc]
+  )
+
   const oneToOne = room ? ROOM_RULES[room.kind].oneToOne : false
 
   /**
-   * Confirmed exit: dissolve the panel, then tell the server. The socket call
-   * waits for the animation so the room seems to evaporate rather than cut —
-   * unless reduced motion asks for the cut.
+   * Confirmed exit: tell the server. For 1v1 the server's room:ended returns to
+   * both sides and the transcript dissolve plays identically for everyone; for a
+   * group this member just leaves and returns to the gate.
    */
   const confirmedVaporize = useCallback(() => {
-    if (leavingRef.current) return
-    leavingRef.current = true
+    if (rtc.inCall) rtc.leaveCall()
     setConfirmOpen(false)
-    const done = () => {
-      leavingRef.current = false
-      vaporize(oneToOne)
-    }
-    if (prefersReducedMotion() || !ref.current) {
-      done()
-      return
-    }
-    gsap.to(ref.current, {
-      opacity: 0,
-      y: -16,
-      filter: "blur(12px)",
-      duration: 0.45,
-      ease: "power2.in",
-      onComplete: done,
-    })
-  }, [vaporize, oneToOne])
+    vaporize(oneToOne)
+  }, [vaporize, oneToOne, rtc])
 
   if (!room) return null
 
@@ -113,7 +154,20 @@ export function Room({ session }: { session: ChatSession }) {
         peers={session.peers}
         onVaporize={openConfirm}
         onShare={openShare}
+        callState={session.callState}
+        inCall={rtc.inCall}
+        onOpenCallPrompt={() => setCallPromptOpen(true)}
+        onQuickJoinCall={onQuickJoinCall}
       />
+
+      {rtc.inCall && (
+        <CallDock
+          rtc={rtc}
+          callState={session.callState}
+          selfName={room.name}
+          selfId={room.selfId}
+        />
+      )}
 
       <MessageList
         lines={session.lines}
@@ -144,6 +198,13 @@ export function Room({ session }: { session: ChatSession }) {
 
       {shareOpen && room.invite && (
         <SharePanel room={room} onClose={closeShare} />
+      )}
+
+      {callPromptOpen && (
+        <CallPromptModal
+          onStart={onStartFromPrompt}
+          onCancel={() => setCallPromptOpen(false)}
+        />
       )}
     </div>
   )
@@ -178,11 +239,19 @@ function ChatHeader({
   peers,
   onVaporize,
   onShare,
+  callState,
+  inCall,
+  onOpenCallPrompt,
+  onQuickJoinCall,
 }: {
   room: RoomJoined
   peers: PeerInfo[]
   onVaporize: () => void
   onShare: () => void
+  callState: CallState
+  inCall: boolean
+  onOpenCallPrompt: () => void
+  onQuickJoinCall: () => void
 }) {
   const kindLabel = KIND_LABEL[room.kind]
   const group = !ROOM_RULES[room.kind].oneToOne && room.kind !== "stranger"
@@ -200,7 +269,7 @@ function ChatHeader({
 
   return (
     <header className="flex items-center justify-between border-b hairline py-3.5">
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full transition-colors duration-500 ${dotClass}`}
         />
@@ -223,13 +292,47 @@ function ChatHeader({
             type="button"
             onClick={onShare}
             title="Invite someone by link"
-            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-fog/20 bg-smoke px-2.5 py-1 font-mono text-[11px] text-fog transition-colors duration-300 outline-none hover:border-signal/40 hover:text-signal focus-visible:ring-2 focus-visible:ring-signal/40"
+            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-fog/20 bg-smoke px-2 py-1 font-mono text-[11px] text-fog transition-colors duration-300 outline-none hover:border-signal/40 hover:text-signal focus-visible:ring-2 focus-visible:ring-signal/40"
           >
             <span
               aria-hidden="true"
               className="h-1 w-1 rounded-full bg-signal/70 transition-colors group-hover:bg-signal"
             />
             invite
+          </button>
+        )}
+
+        {/* Ephemeral call trigger */}
+        {inCall ? (
+          <span className="flex shrink-0 items-center gap-1.5 rounded-sm border border-signal/40 bg-signal/10 px-2 py-1 font-mono text-[11px] text-signal">
+            <span className="h-1 w-1 rounded-full bg-signal animate-pulse" />
+            in call
+          </span>
+        ) : callState.active ? (
+          <button
+            type="button"
+            onClick={onQuickJoinCall}
+            title="Join the active call"
+            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-signal/40 bg-smoke px-2 py-1 font-mono text-[11px] text-signal transition-colors duration-300 outline-none hover:bg-signal/15 focus-visible:ring-2 focus-visible:ring-signal/40"
+          >
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-signal" />
+            </span>
+            join call ({callState.members.length})
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenCallPrompt}
+            title="Start an ephemeral voice or video call"
+            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-fog/20 bg-smoke px-2 py-1 font-mono text-[11px] text-fog transition-colors duration-300 outline-none hover:border-signal/40 hover:text-signal focus-visible:ring-2 focus-visible:ring-signal/40"
+          >
+            <span
+              aria-hidden="true"
+              className="h-1 w-1 rounded-full bg-fog-dim transition-colors group-hover:bg-signal"
+            />
+            call
           </button>
         )}
       </div>

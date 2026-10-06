@@ -175,6 +175,35 @@ export interface AppError {
   message: string
 }
 
+/** Ephemeral voice & video call types — WebRTC P2P mesh */
+export type CallMode = "audio" | "video"
+
+export interface CallMember {
+  peerId: string
+  name: string
+  mode: CallMode
+  muted: boolean
+  videoEnabled: boolean
+}
+
+export interface CallState {
+  active: boolean
+  members: CallMember[]
+}
+
+export type CallSignal =
+  | { type: "offer"; sdp: { type: string; sdp?: string } }
+  | { type: "answer"; sdp: { type: string; sdp?: string } }
+  | {
+      type: "candidate"
+      candidate: {
+        candidate?: string
+        sdpMid?: string | null
+        sdpMLineIndex?: number | null
+        usernameFragment?: string | null
+      }
+    }
+
 /** client → server */
 export interface ClientToServer {
   /** clientId: per-tab identity — with the name it forms the match identity */
@@ -205,6 +234,12 @@ export interface ClientToServer {
    * 1v1 → the room ends for both; group → only this member leaves.
    */
   "room:vaporize": () => void
+
+  /** ephemeral call actions */
+  "call:join": (p: { mode: CallMode }) => void
+  "call:leave": () => void
+  "call:state_update": (p: { muted: boolean; videoEnabled: boolean }) => void
+  "call:signal": (p: { to: string; signal: CallSignal }) => void
 }
 
 /** server → client */
@@ -234,4 +269,9 @@ export interface ServerToClient {
   /** the room is over for everyone; `by` names who caused it, when knowable */
   "room:ended": (p: { reason: string; cause: EndCause; by?: string }) => void
   "app:error": (p: AppError) => void
+
+  /** ephemeral call state & signaling */
+  "call:state": (p: CallState) => void
+  "call:signal": (p: { from: string; signal: CallSignal }) => void
 }
+

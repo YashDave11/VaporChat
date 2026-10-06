@@ -139,7 +139,7 @@ export const MessageList = memo(function MessageList({
         role="log"
         aria-live="polite"
         aria-label="Messages"
-        className="h-full overflow-y-auto py-6"
+        className="transcript-fade h-full overflow-y-auto py-6"
       >
         {blocks.length === 0 && <EmptyState alone={alone} kind={kind} />}
 
@@ -148,6 +148,7 @@ export const MessageList = memo(function MessageList({
             block.type === "sys" ? (
               <li
                 key={block.id}
+                data-sys
                 className="msg-in py-1 text-center font-mono text-[11px] text-fog-dim"
               >
                 — {block.text} —

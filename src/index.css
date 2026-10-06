@@ -500,6 +500,15 @@ body {
   }
 }
 
+/* ---- transcript aging: older lines thin into haze at the top edge ----
+   The scroll container is masked so a message dissolves toward transparency
+   as it scrolls up and out — impermanence made continuous, not just at the
+   end. Static (no JS, no motion), so reduced-motion needs no exception. */
+.transcript-fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 9%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 9%);
+}
+
 /* ---- message condensation: each new line blurs in like breath on glass ---- */
 .msg-in {
   animation: msg-in 0.45s var(--ease-fog) both;

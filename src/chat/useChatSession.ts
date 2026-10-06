@@ -11,6 +11,7 @@ import type {
   InviteInfo,
   InviteDeadReason,
   HostedRoomKind,
+  CallState,
 } from "@shared/protocol"
 import { LIMITS } from "@shared/protocol"
 import { getSocket } from "./socket"
@@ -66,6 +67,9 @@ interface State {
   typing: string[]
   directory: PublicRoomInfo[]
   error: AppError | null
+  /** set while the transcript evaporates, before the Ended screen commits */
+  dissolving: { reason: string; cause: EndCause; by?: string } | null
+  callState: CallState
 }
 
 type Action =
@@ -85,9 +89,11 @@ type Action =
   | { type: "invite_resolving"; token: string }
   | { type: "invite_info"; info: InviteInfo }
   | { type: "invite_dead"; reason: InviteDeadReason }
-  | { type: "ended"; reason: string; cause: EndCause; by?: string }
+  | { type: "begin_dissolve"; reason: string; cause: EndCause; by?: string }
+  | { type: "ended" }
   | { type: "error"; error: AppError }
   | { type: "clear_error" }
+  | { type: "call_state"; callState: CallState }
   | { type: "left" }
 
 const initial: State = {
@@ -99,6 +105,8 @@ const initial: State = {
   typing: [],
   directory: [],
   error: null,
+  dissolving: null,
+  callState: { active: false, members: [] },
 }
 
 const searchingAgain = (note: string | null): Stage => ({
@@ -255,26 +263,35 @@ function reducer(state: State, action: Action): State {
         ...state,
         stage: { view: "invite", invite: { phase: "dead", reason: action.reason } },
       }
-    case "ended":
-      // an ended notice matters only for the room we're standing in — after
-      // a deliberate navigate-away (e.g. onto an invite doorstep) it's stale
+    case "begin_dissolve":
+      // keep the room (and its transcript) mounted so the real bubbles can
+      // evaporate; the stage swap to "ended" is committed by finishDissolve
       if (state.stage.view !== "room") return state
       return {
         ...state,
-        stage: {
-          view: "ended",
-          reason: action.reason,
-          cause: action.cause,
-          by: action.by,
-        },
+        dissolving: { reason: action.reason, cause: action.cause, by: action.by },
+      }
+    case "ended": {
+      // committed by finishDissolve once the transcript has evaporated; the
+      // reason/cause/by were stashed on begin_dissolve
+      if (state.stage.view !== "room" || !state.dissolving) return state
+      const { reason, cause, by } = state.dissolving
+      return {
+        ...state,
+        stage: { view: "ended", reason, cause, by },
         lines: [],
         peers: [],
         typing: [],
+        dissolving: null,
+        callState: { active: false, members: [] },
       }
+    }
     case "error":
       return { ...state, error: action.error }
     case "clear_error":
       return { ...state, error: null }
+    case "call_state":
+      return { ...state, callState: action.callState }
     case "left":
       return { ...initial, name: state.name, directory: state.directory }
     default:
@@ -382,7 +399,12 @@ export function useChatSession() {
       // the room stopped existing — the mirror of the join cue
       playCue("leave")
       sessionStorage.removeItem(RESUME_KEY)
-      dispatch({ type: "ended", reason: p.reason, cause: p.cause, by: p.by })
+      // hold the transcript on screen and let it evaporate; the Ended screen
+      // commits once Room reports the dissolve is done (finishDissolve)
+      dispatch({ type: "begin_dissolve", reason: p.reason, cause: p.cause, by: p.by })
+    }
+    const onCallState = (callState: CallState) => {
+      dispatch({ type: "call_state", callState })
     }
     const onError = (e: AppError) => {
       // a failed resume just means the room is gone — arrive at the gate quietly
@@ -429,6 +451,7 @@ export function useChatSession() {
     socket.on("invite:info", onInviteInfo)
     socket.on("invite:dead", onInviteDead)
     socket.on("room:ended", onEnded)
+    socket.on("call:state", onCallState)
     socket.on("app:error", onError)
     socket.io.on("reconnect", tryResume)
 
@@ -475,6 +498,7 @@ export function useChatSession() {
       socket.off("invite:info", onInviteInfo)
       socket.off("invite:dead", onInviteDead)
       socket.off("room:ended", onEnded)
+      socket.off("call:state", onCallState)
       socket.off("app:error", onError)
       socket.io.off("reconnect", tryResume)
       for (const t of timers.values()) clearTimeout(t)
@@ -573,6 +597,8 @@ export function useChatSession() {
     dispatch({ type: "left" })
   }, [])
   const clearError = useCallback(() => dispatch({ type: "clear_error" }), [])
+  /** the transcript finished evaporating — commit the Ended screen */
+  const finishDissolve = useCallback(() => dispatch({ type: "ended" }), [])
 
   return {
     ...state,
@@ -591,6 +617,7 @@ export function useChatSession() {
     vaporize,
     backToGate,
     clearError,
+    finishDissolve,
   }
 }
 

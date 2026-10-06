@@ -19,7 +19,7 @@
  *    may outlive the session in localStorage.
  */
 
-export type CueName = "match" | "join" | "leave"
+export type CueName = "match" | "join" | "leave" | "call_join" | "call_leave"
 
 const STORE_KEY = "vapor:sound"
 
@@ -111,6 +111,15 @@ const CUES: Record<CueName, { freq: number; at: number }[]> = {
   leave: [
     { freq: 587.33, at: 0 }, // D5
     { freq: 392.0, at: 0.12 }, // G4 — match, mirrored
+  ],
+  call_join: [
+    { freq: 440.0, at: 0 }, // A4
+    { freq: 659.25, at: 0.08 }, // E5
+    { freq: 783.99, at: 0.16 }, // G5
+  ],
+  call_leave: [
+    { freq: 783.99, at: 0 }, // G5
+    { freq: 587.33, at: 0.1 }, // D5
   ],
 }
 

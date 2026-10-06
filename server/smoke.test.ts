@@ -529,6 +529,50 @@ async function main() {
   g4.emit("key:join", { key: gr.key })
   ok((await deadGroupKey).code === "BAD_KEY", "group room and key cleaned up when last member leaves")
 
+  // 9. Ephemeral call signaling: join call, update state, signal relay, leave call
+  const ca = await connect("ca")
+  const cb = await connect("cb")
+  const caJoinPromise = once<any>(ca, "room:joined")
+  ca.emit("room:create", { kind: "private", roomName: "call-room" })
+  const cr = await caJoinPromise
+  const cbJoined = once<any>(cb, "room:joined")
+  cb.emit("key:join", { key: cr.key })
+  await cbJoined
+
+  // ca joins call
+  const cbSeesCallState1 = once<any>(cb, "call:state")
+  ca.emit("call:join", { mode: "audio" })
+  const cs1 = await cbSeesCallState1
+  ok(cs1.active && cs1.members.length === 1 && cs1.members[0].name === "ca", "peer sees call active when member joins")
+
+  // cb joins call — both sides receive the update
+  const caSeesCallState2 = once<any>(ca, "call:state")
+  const cbSeesCallState2 = once<any>(cb, "call:state")
+  cb.emit("call:join", { mode: "video" })
+  const [cs2] = await Promise.all([caSeesCallState2, cbSeesCallState2])
+  ok(cs2.members.length === 2, "both peers reflected in call state")
+
+  // ca updates mute
+  const cbSeesCallState3 = once<any>(cb, "call:state")
+  ca.emit("call:state_update", { muted: true, videoEnabled: false })
+  const cs3 = await cbSeesCallState3
+  const caMember = cs3.members.find((m: any) => m.name === "ca")
+  ok(caMember?.muted === true, "mute state update reflected in call state")
+
+  // cb relays signal to ca
+  const caReceivesSignal = once<any>(ca, "call:signal")
+  cb.emit("call:signal", { to: caMember.peerId, signal: { type: "offer", sdp: { type: "offer", sdp: "v=0" } } })
+  const sig = await caReceivesSignal
+  ok(sig.signal.type === "offer" && sig.signal.sdp.sdp === "v=0", "P2P WebRTC signal relayed through server")
+
+  // ca leaves call
+  const cbSeesCallState4 = once<any>(cb, "call:state")
+  ca.emit("call:leave")
+  const cs4 = await cbSeesCallState4
+  ok(cs4.members.length === 1 && cs4.members[0].name === "cb", "call state updates when member leaves call")
+
+  ca.disconnect()
+  cb.disconnect()
   g1.disconnect()
   g2.disconnect()
   g3.disconnect()

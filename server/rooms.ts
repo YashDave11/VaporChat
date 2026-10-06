@@ -1,5 +1,12 @@
 import { randomUUID, randomInt } from "node:crypto"
-import type { RoomKind, PublicRoomInfo, PeerInfo, PeerStatus } from "../shared/protocol.ts"
+import type {
+  RoomKind,
+  PublicRoomInfo,
+  PeerInfo,
+  PeerStatus,
+  CallMember,
+  CallState,
+} from "../shared/protocol.ts"
 import { LIMITS, ROOM_RULES } from "../shared/protocol.ts"
 
 /**
@@ -39,6 +46,8 @@ export interface Room {
   title?: string
   /** memberId → seat */
   members: Map<string, Member>
+  /** socketId → call member state */
+  callMembers: Map<string, CallMember>
 }
 
 const rooms = new Map<string, Room>()
@@ -125,6 +134,7 @@ export function createRoom(
     createdBy: opts.createdBy ?? "",
     title: opts.title,
     members: new Map(),
+    callMembers: new Map(),
   }
   if (ROOM_RULES[kind].keyed) {
     room.key = mintKey()
@@ -223,7 +233,12 @@ export function findResumable(
  */
 export function removeMember(room: Room, memberId: string): boolean {
   const member = room.members.get(memberId)
-  if (member) resumeTokens.delete(member.resumeToken)
+  if (member) {
+    resumeTokens.delete(member.resumeToken)
+    if (member.socketId) {
+      room.callMembers.delete(member.socketId)
+    }
+  }
   room.members.delete(memberId)
   if (room.members.size === 0) {
     deleteRoom(room)
@@ -235,7 +250,38 @@ export function removeMember(room: Room, memberId: string): boolean {
 /** authoritative teardown: registry, join key, invite, every resume token */
 export function deleteRoom(room: Room): void {
   for (const m of room.members.values()) resumeTokens.delete(m.resumeToken)
+  room.callMembers.clear()
   rooms.delete(room.id)
   if (room.key) joinKeys.delete(room.key)
   if (room.invite) inviteTokens.delete(room.invite)
 }
+
+/** Ephemeral call state helpers — in-memory only */
+
+export function getCallState(room: Room): CallState {
+  return {
+    active: room.callMembers.size > 0,
+    members: Array.from(room.callMembers.values()),
+  }
+}
+
+export function joinCall(room: Room, member: CallMember): void {
+  room.callMembers.set(member.peerId, member)
+}
+
+export function leaveCall(room: Room, peerId: string): boolean {
+  return room.callMembers.delete(peerId)
+}
+
+export function updateCallMember(
+  room: Room,
+  peerId: string,
+  updates: { muted: boolean; videoEnabled: boolean }
+): boolean {
+  const m = room.callMembers.get(peerId)
+  if (!m) return false
+  m.muted = updates.muted
+  m.videoEnabled = updates.videoEnabled
+  return true
+}
+
