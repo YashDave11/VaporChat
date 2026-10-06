@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import type { CallState } from "@shared/protocol"
@@ -63,13 +63,19 @@ export function CallDock({
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream
+      void localVideoRef.current.play().catch(() => {})
     }
   }, [localStream, videoEnabled])
 
   // Count active video streams to decide whether to render the video grid
   const hasAnyVideo =
     videoEnabled ||
-    callState.members.some((m) => m.peerId !== selfId && m.videoEnabled)
+    callState.members.some(
+      (m) =>
+        m.peerId !== selfId &&
+        (m.videoEnabled ||
+          (remoteStreams.get(m.peerId)?.getVideoTracks().length ?? 0) > 0)
+    )
 
   return (
     <div
@@ -100,7 +106,7 @@ export function CallDock({
             variant="danger"
             size="sm"
             onClick={leaveCall}
-            className="h-6 px-2 text-[11px] font-mono"
+            className="h-6 px-2 text-[11px] font-mono cursor-pointer"
             title="Leave call and stay in chat"
           >
             Leave call ↗
@@ -124,11 +130,11 @@ export function CallDock({
 
       {/* Video Grid (shown when at least one participant has camera enabled) */}
       {hasAnyVideo && (
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {/* Local user video card if camera is on */}
           {videoEnabled && (
             <div
-              className={`relative aspect-video overflow-hidden rounded border bg-void/80 transition-all ${
+              className={`relative aspect-video overflow-hidden rounded border bg-void/90 transition-all ${
                 speakingPeers.has("local")
                   ? "border-signal shadow-[0_0_12px_rgba(169,232,220,0.25)]"
                   : "border-fog/20"
@@ -141,7 +147,7 @@ export function CallDock({
                 muted
                 className="h-full w-full object-cover -scale-x-100"
               />
-              <div className="absolute bottom-1 left-1.5 flex items-center gap-1 rounded bg-void/70 px-1.5 py-0.5 font-mono text-[9px] text-breath backdrop-blur-xs">
+              <div className="absolute bottom-1.5 left-2 flex items-center gap-1.5 rounded bg-void/80 px-2 py-0.5 font-mono text-[10px] text-breath backdrop-blur-xs">
                 <span>{selfName} (you)</span>
                 {isMuted && <span className="text-ember">· muted</span>}
               </div>
@@ -150,7 +156,12 @@ export function CallDock({
 
           {/* Remote peers video cards */}
           {callState.members
-            .filter((m) => m.peerId !== selfId && m.videoEnabled)
+            .filter(
+              (m) =>
+                m.peerId !== selfId &&
+                (m.videoEnabled ||
+                  (remoteStreams.get(m.peerId)?.getVideoTracks().length ?? 0) > 0)
+            )
             .map((member) => (
               <RemoteVideoCard
                 key={member.peerId}
@@ -207,20 +218,35 @@ export function CallDock({
       </div>
 
       {/* In-Call Action Bar: Mic toggle · Camera toggle */}
-      <div className="mt-3 flex items-center justify-between pt-2 border-t hairline">
+      <div className="mt-3 flex items-center justify-between pt-2.5 border-t hairline">
         <div className="flex items-center gap-2">
           {/* Mute button */}
           <button
             type="button"
             onClick={toggleMute}
-            className={`flex cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+            className={`flex cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1.5 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
               isMuted
                 ? "border-ember/40 bg-ember/10 text-ember hover:border-ember hover:bg-ember/20"
                 : "border-fog/25 bg-smoke text-breath hover:border-signal/40 hover:text-signal"
             }`}
             title={isMuted ? "Unmute microphone" : "Mute microphone"}
           >
-            <span aria-hidden="true">{isMuted ? "✕" : "●"}</span>
+            {isMuted ? (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="1" y1="1" x2="23" y2="23" />
+                <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+                <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            )}
             <span>{isMuted ? "Unmute" : "Mute"}</span>
           </button>
 
@@ -228,14 +254,24 @@ export function CallDock({
           <button
             type="button"
             onClick={toggleVideo}
-            className={`flex cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+            className={`flex cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1.5 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
               videoEnabled
                 ? "border-signal/50 bg-signal/15 text-signal hover:bg-signal/25"
                 : "border-fog/25 bg-smoke text-breath hover:border-fog/60 hover:text-signal"
             }`}
             title={videoEnabled ? "Turn off camera" : "Turn on camera"}
           >
-            <span aria-hidden="true">{videoEnabled ? "■" : "▲"}</span>
+            {videoEnabled ? (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polygon points="23 7 16 12 23 17 23 7" />
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m4 0h5a2 2 0 0 1 2 2v3l7-5v11l-3-2.14" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+            )}
             <span>{videoEnabled ? "Video on" : "Video off"}</span>
           </button>
         </div>
@@ -258,16 +294,51 @@ function RemoteVideoCard({
   isSpeaking: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [hasLiveVideo, setHasLiveVideo] = useState(false)
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream
+    const video = videoRef.current
+    if (!video || !stream) {
+      setHasLiveVideo(false)
+      return
+    }
+
+    video.srcObject = stream
+    void video.play().catch(() => {})
+
+    const checkTracks = () => {
+      const live = stream.getVideoTracks().some((t) => t.readyState === "live" && t.enabled)
+      setHasLiveVideo(live)
+      if (video.srcObject !== stream) {
+        video.srcObject = stream
+      }
+      void video.play().catch(() => {})
+    }
+
+    checkTracks()
+
+    stream.addEventListener("addtrack", checkTracks)
+    stream.addEventListener("removetrack", checkTracks)
+    stream.getVideoTracks().forEach((track) => {
+      track.addEventListener("unmute", checkTracks)
+      track.addEventListener("mute", checkTracks)
+      track.addEventListener("ended", checkTracks)
+    })
+
+    return () => {
+      stream.removeEventListener("addtrack", checkTracks)
+      stream.removeEventListener("removetrack", checkTracks)
+      stream.getVideoTracks().forEach((track) => {
+        track.removeEventListener("unmute", checkTracks)
+        track.removeEventListener("mute", checkTracks)
+        track.removeEventListener("ended", checkTracks)
+      })
     }
   }, [stream])
 
   return (
     <div
-      className={`relative aspect-video overflow-hidden rounded border bg-void/80 transition-all ${
+      className={`relative aspect-video overflow-hidden rounded border bg-void/90 transition-all ${
         isSpeaking
           ? "border-signal shadow-[0_0_12px_rgba(169,232,220,0.25)]"
           : "border-fog/20"
@@ -277,9 +348,22 @@ function RemoteVideoCard({
         ref={videoRef}
         autoPlay
         playsInline
-        className="h-full w-full object-cover"
+        muted
+        className={`h-full w-full object-cover transition-opacity duration-300 ${
+          hasLiveVideo ? "opacity-100" : "opacity-0"
+        }`}
       />
-      <div className="absolute bottom-1 left-1.5 flex items-center gap-1 rounded bg-void/70 px-1.5 py-0.5 font-mono text-[9px] text-breath backdrop-blur-xs">
+      {!hasLiveVideo && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-void/80 p-2 text-center">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full border border-fog/20 bg-smoke font-mono text-xs text-breath">
+            {member.name.slice(0, 2).toUpperCase()}
+          </span>
+          <span className="font-mono text-[10px] text-fog-dim animate-pulse">
+            connecting camera...
+          </span>
+        </div>
+      )}
+      <div className="absolute bottom-1.5 left-2 flex items-center gap-1.5 rounded bg-void/80 px-2 py-0.5 font-mono text-[10px] text-breath backdrop-blur-xs">
         <span>{member.name}</span>
         {member.muted && <span className="text-ember">· muted</span>}
       </div>

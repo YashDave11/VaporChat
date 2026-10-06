@@ -170,11 +170,20 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       pendingCandidates: [],
     }
 
-    // Attach local tracks
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current!)
-      })
+    // Attach local audio track or add audio transceiver
+    const audioTrack = localStreamRef.current?.getAudioTracks()[0]
+    if (audioTrack) {
+      pc.addTrack(audioTrack, localStreamRef.current!)
+    } else {
+      pc.addTransceiver("audio", { direction: "sendrecv" })
+    }
+
+    // Attach local video track or add video transceiver so SDP m=video is always negotiated
+    const videoTrack = localStreamRef.current?.getVideoTracks()[0]
+    if (videoTrack) {
+      pc.addTrack(videoTrack, localStreamRef.current!)
+    } else {
+      pc.addTransceiver("video", { direction: "sendrecv" })
     }
 
     // Handle ICE candidates
@@ -195,13 +204,20 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
     }
 
-    // Handle incoming remote media tracks
+    // Handle incoming remote media tracks (supports both event.track and event.streams)
     pc.ontrack = (event) => {
-      event.streams[0]?.getTracks().forEach((track) => {
-        if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
-          remoteStream.addTrack(track)
+      if (event.track) {
+        if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
+          remoteStream.addTrack(event.track)
         }
-      })
+      }
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach((track) => {
+          if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
+            remoteStream.addTrack(track)
+          }
+        })
+      }
 
       // Audio playback element for ultra-low latency playback
       if (!bundle.audioEl) {
@@ -214,9 +230,10 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
       attachRemoteAnalyser(peerId, remoteStream)
 
+      // Provide a new MediaStream instance so React components detect the state change
       setRemoteStreams((prev) => {
         const updated = new Map(prev)
-        updated.set(peerId, remoteStream)
+        updated.set(peerId, new MediaStream(remoteStream.getTracks()))
         return updated
       })
     }
@@ -325,7 +342,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     })
   }, [])
 
-  // Toggle video
+  // Toggle video seamlessly without renegotiation
   const toggleVideo = useCallback(async () => {
     if (!localStreamRef.current) return
     const next = !videoEnabledRef.current
@@ -337,11 +354,35 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
         })
         const newTrack = videoStream.getVideoTracks()[0]
         if (newTrack) {
-          localStreamRef.current.addTrack(newTrack)
-          // Add to all active peer connections
-          peersRef.current.forEach(({ pc }) => {
-            pc.addTrack(newTrack, localStreamRef.current!)
+          // Clean up old video tracks if any
+          localStreamRef.current.getVideoTracks().forEach((track) => {
+            track.stop()
+            localStreamRef.current?.removeTrack(track)
           })
+
+          localStreamRef.current.addTrack(newTrack)
+          setLocalStream(new MediaStream(localStreamRef.current.getTracks()))
+
+          // Route to all active peer connections using existing video transceiver/sender
+          peersRef.current.forEach(({ pc }) => {
+            const videoTransceiver = pc.getTransceivers().find(
+              (t) =>
+                t.sender.track?.kind === "video" ||
+                t.receiver.track?.kind === "video"
+            )
+            if (videoTransceiver) {
+              videoTransceiver.direction = "sendrecv"
+              void videoTransceiver.sender.replaceTrack(newTrack)
+            } else {
+              const videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
+              if (videoSender) {
+                void videoSender.replaceTrack(newTrack)
+              } else {
+                pc.addTrack(newTrack, localStreamRef.current!)
+              }
+            }
+          })
+
           setVideoEnabled(true)
           setMode("video")
           getSocket().emit("call:state_update", {
@@ -358,12 +399,25 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       videoTracks.forEach((track) => {
         track.stop()
         localStreamRef.current?.removeTrack(track)
-        peersRef.current.forEach(({ pc }) => {
-          const senders = pc.getSenders()
-          const sender = senders.find((s) => s.track === track)
-          if (sender) pc.removeTrack(sender)
-        })
       })
+      setLocalStream(new MediaStream(localStreamRef.current.getTracks()))
+
+      peersRef.current.forEach(({ pc }) => {
+        const videoTransceiver = pc.getTransceivers().find(
+          (t) =>
+            t.sender.track?.kind === "video" ||
+            t.receiver.track?.kind === "video"
+        )
+        if (videoTransceiver) {
+          void videoTransceiver.sender.replaceTrack(null)
+        } else {
+          const videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
+          if (videoSender) {
+            void videoSender.replaceTrack(null)
+          }
+        }
+      })
+
       setVideoEnabled(false)
       getSocket().emit("call:state_update", {
         muted: isMutedRef.current,

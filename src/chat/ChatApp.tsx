@@ -40,7 +40,13 @@ export function ChatApp() {
         intensity={accepted ? (VAPOR_BY_VIEW[view] ?? "cinematic") : "cinematic"}
       />
 
-      <header className="relative z-10 mx-auto flex w-full max-w-2xl items-center justify-between px-6 py-6">
+      <header
+        className={`relative z-10 mx-auto flex w-full transition-all duration-300 items-center justify-between ${
+          view === "room"
+            ? "max-w-5xl xl:max-w-6xl px-4 sm:px-6 py-3 sm:py-4"
+            : "max-w-2xl px-6 py-6"
+        }`}
+      >
         <a
           href="#/"
           onClick={() => session.backToGate()}
@@ -61,7 +67,11 @@ export function ChatApp() {
         </div>
       </header>
 
-      <main className="relative z-10 flex flex-1 flex-col justify-center pb-10">
+      <main
+        className={`relative z-10 flex flex-1 flex-col ${
+          view === "room" ? "justify-start pb-2 sm:pb-3" : "justify-center pb-10"
+        }`}
+      >
         {!accepted ? (
           <PreChatNotice
             onAccept={() => setAccepted(true)}

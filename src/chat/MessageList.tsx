@@ -283,7 +283,7 @@ const Bubble = memo(function Bubble({
   return (
     <div
       data-mid={msg.id}
-      className={`msg-in group relative flex max-w-[85%] items-center gap-1.5 sm:max-w-[70%] ${
+      className={`msg-in group relative flex max-w-[90%] items-center gap-1.5 sm:max-w-[80%] md:max-w-[75%] ${
         self ? "flex-row-reverse" : ""
       }`}
     >
