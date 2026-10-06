@@ -140,6 +140,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   }, [ensureAudioContext])
 
   const attachRemoteAnalyser = useCallback((peerId: string, stream: MediaStream) => {
+    if (remoteAnalysersRef.current.has(peerId)) return
     const actx = ensureAudioContext()
     if (!actx) return
     const audioTracks = stream.getAudioTracks()
@@ -188,7 +189,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && event.candidate.candidate) {
         getSocket().emit("call:signal", {
           to: peerId,
           signal: {
@@ -219,21 +220,19 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
         })
       }
 
-      // Audio playback element for ultra-low latency playback
-      if (!bundle.audioEl) {
-        const audio = new Audio()
-        audio.srcObject = remoteStream
-        audio.autoplay = true
-        void audio.play().catch(() => {})
-        bundle.audioEl = audio
-      }
+      // Also gather any tracks from all active receivers on this peer connection
+      pc.getReceivers().forEach((receiver) => {
+        if (receiver.track && !remoteStream.getTracks().some((t) => t.id === receiver.track.id)) {
+          remoteStream.addTrack(receiver.track)
+        }
+      })
 
       attachRemoteAnalyser(peerId, remoteStream)
 
-      // Provide a new MediaStream instance so React components detect the state change
+      // Provide updated stream to state so video and audio elements re-render/detect
       setRemoteStreams((prev) => {
         const updated = new Map(prev)
-        updated.set(peerId, new MediaStream(remoteStream.getTracks()))
+        updated.set(peerId, remoteStream)
         return updated
       })
     }
@@ -342,7 +341,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     })
   }, [])
 
-  // Toggle video seamlessly without renegotiation
+  // Toggle video with track replacement and renegotiation
   const toggleVideo = useCallback(async () => {
     if (!localStreamRef.current) return
     const next = !videoEnabledRef.current
@@ -363,23 +362,35 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
           localStreamRef.current.addTrack(newTrack)
           setLocalStream(new MediaStream(localStreamRef.current.getTracks()))
 
-          // Route to all active peer connections using existing video transceiver/sender
-          peersRef.current.forEach(({ pc }) => {
-            const videoTransceiver = pc.getTransceivers().find(
-              (t) =>
-                t.sender.track?.kind === "video" ||
-                t.receiver.track?.kind === "video"
-            )
-            if (videoTransceiver) {
-              videoTransceiver.direction = "sendrecv"
-              void videoTransceiver.sender.replaceTrack(newTrack)
+          // Route to all active peer connections
+          peersRef.current.forEach(async ({ pc }, peerId) => {
+            let videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
+            if (videoSender) {
+              await videoSender.replaceTrack(newTrack)
             } else {
-              const videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
-              if (videoSender) {
-                void videoSender.replaceTrack(newTrack)
-              } else {
-                pc.addTrack(newTrack, localStreamRef.current!)
-              }
+              videoSender = pc.addTrack(newTrack, localStreamRef.current!)
+            }
+
+            const videoTransceiver = pc.getTransceivers().find(
+              (t) => t.sender === videoSender || t.receiver.track?.kind === "video"
+            )
+            if (videoTransceiver && videoTransceiver.direction !== "sendrecv") {
+              videoTransceiver.direction = "sendrecv"
+            }
+
+            // Renegotiate offer so remote peer's camera feed activates
+            try {
+              const offer = await pc.createOffer()
+              await pc.setLocalDescription(offer)
+              getSocket().emit("call:signal", {
+                to: peerId,
+                signal: {
+                  type: "offer",
+                  sdp: { type: offer.type, sdp: offer.sdp },
+                },
+              })
+            } catch {
+              // ignore
             }
           })
 
@@ -403,18 +414,9 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       setLocalStream(new MediaStream(localStreamRef.current.getTracks()))
 
       peersRef.current.forEach(({ pc }) => {
-        const videoTransceiver = pc.getTransceivers().find(
-          (t) =>
-            t.sender.track?.kind === "video" ||
-            t.receiver.track?.kind === "video"
-        )
-        if (videoTransceiver) {
-          void videoTransceiver.sender.replaceTrack(null)
-        } else {
-          const videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
-          if (videoSender) {
-            void videoSender.replaceTrack(null)
-          }
+        const videoSender = pc.getSenders().find((s) => s.track?.kind === "video")
+        if (videoSender) {
+          void videoSender.replaceTrack(null)
         }
       })
 
@@ -447,7 +449,13 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
           // Flush pending candidates
           while (bundle.pendingCandidates.length > 0) {
             const cand = bundle.pendingCandidates.shift()
-            if (cand) await pc.addIceCandidate(new RTCIceCandidate(cand))
+            if (cand) {
+              try {
+                await pc.addIceCandidate(cand)
+              } catch {
+                // ignore
+              }
+            }
           }
           const answer = await pc.createAnswer()
           await pc.setLocalDescription(answer)
@@ -466,20 +474,28 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp as RTCSessionDescriptionInit))
           while (bundle.pendingCandidates.length > 0) {
             const cand = bundle.pendingCandidates.shift()
-            if (cand) await pc.addIceCandidate(new RTCIceCandidate(cand))
+            if (cand) {
+              try {
+                await pc.addIceCandidate(cand)
+              } catch {
+                // ignore
+              }
+            }
           }
         } catch {
           // ignore
         }
       } else if (signal.type === "candidate") {
-        try {
-          if (pc.remoteDescription) {
-            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate as RTCIceCandidateInit))
-          } else {
-            bundle.pendingCandidates.push(signal.candidate as RTCIceCandidateInit)
+        if (signal.candidate && signal.candidate.candidate) {
+          try {
+            if (pc.remoteDescription) {
+              await pc.addIceCandidate(signal.candidate as RTCIceCandidateInit)
+            } else {
+              bundle.pendingCandidates.push(signal.candidate as RTCIceCandidateInit)
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
         }
       }
     }
@@ -519,6 +535,24 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
             // ignore
           }
         }
+      }
+    })
+
+    // Sync any newly available tracks from receivers into remoteStreams
+    peersRef.current.forEach((bundle, peerId) => {
+      let changed = false
+      bundle.pc.getReceivers().forEach((receiver) => {
+        if (receiver.track && !bundle.remoteStream.getTracks().some((t) => t.id === receiver.track.id)) {
+          bundle.remoteStream.addTrack(receiver.track)
+          changed = true
+        }
+      })
+      if (changed) {
+        setRemoteStreams((prev) => {
+          const next = new Map(prev)
+          next.set(peerId, bundle.remoteStream)
+          return next
+        })
       }
     })
 

@@ -280,7 +280,65 @@ export function CallDock({
           {callState.members.length} {callState.members.length === 1 ? "voice" : "voices"} in call
         </span>
       </div>
+
+      {/* Invisible DOM-mounted audio receivers for crystal-clear remote audio in all browsers */}
+      {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
+        <RemoteAudioTrack key={peerId} stream={stream} />
+      ))}
     </div>
+  )
+}
+
+function RemoteAudioTrack({ stream }: { stream: MediaStream }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !stream) return
+
+    audio.srcObject = stream
+    audio.volume = 1.0
+
+    const playAudio = () => {
+      audio.play().catch((err) => {
+        // Autoplay may be restricted until user gesture
+        console.warn("[VaporCall] Audio playback waiting for gesture:", err)
+      })
+    }
+
+    playAudio()
+
+    // Unlock on any user gesture in case browser restricted autoplay
+    const unlock = () => {
+      if (audio.paused) {
+        void audio.play().catch(() => {})
+      }
+    }
+
+    window.addEventListener("click", unlock, { passive: true })
+    window.addEventListener("touchstart", unlock, { passive: true })
+    window.addEventListener("keydown", unlock, { passive: true })
+
+    const onAddTrack = () => playAudio()
+    stream.addEventListener("addtrack", onAddTrack)
+
+    return () => {
+      window.removeEventListener("click", unlock)
+      window.removeEventListener("touchstart", unlock)
+      window.removeEventListener("keydown", unlock)
+      stream.removeEventListener("addtrack", onAddTrack)
+    }
+  }, [stream])
+
+  return (
+    <audio
+      ref={audioRef}
+      autoPlay
+      playsInline
+      controls={false}
+      className="hidden"
+      aria-hidden="true"
+    />
   )
 }
 
@@ -289,49 +347,71 @@ function RemoteVideoCard({
   stream,
   isSpeaking,
 }: {
-  member: { peerId: string; name: string; muted: boolean }
+  member: { peerId: string; name: string; muted: boolean; videoEnabled?: boolean }
   stream?: MediaStream
   isSpeaking: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [hasLiveVideo, setHasLiveVideo] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
 
   useEffect(() => {
     const video = videoRef.current
     if (!video || !stream) {
-      setHasLiveVideo(false)
+      setIsPlaying(false)
       return
     }
 
     video.srcObject = stream
-    void video.play().catch(() => {})
 
-    const checkTracks = () => {
-      const live = stream.getVideoTracks().some((t) => t.readyState === "live" && t.enabled)
-      setHasLiveVideo(live)
-      if (video.srcObject !== stream) {
-        video.srcObject = stream
+    const tryPlay = () => {
+      const vTracks = stream.getVideoTracks()
+      if (vTracks.length > 0 && vTracks.some((t) => t.readyState !== "ended")) {
+        video
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch(() => {})
       }
-      void video.play().catch(() => {})
     }
 
-    checkTracks()
+    tryPlay()
 
-    stream.addEventListener("addtrack", checkTracks)
-    stream.addEventListener("removetrack", checkTracks)
+    const onPlaying = () => setIsPlaying(true)
+    const onLoadedMetadata = () => {
+      tryPlay()
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setIsPlaying(true)
+      }
+    }
+
+    video.addEventListener("loadedmetadata", onLoadedMetadata)
+    video.addEventListener("loadeddata", onLoadedMetadata)
+    video.addEventListener("canplay", tryPlay)
+    video.addEventListener("playing", onPlaying)
+    video.addEventListener("resize", onLoadedMetadata)
+
+    const onTrackChange = () => {
+      tryPlay()
+    }
+    stream.addEventListener("addtrack", onTrackChange)
+    stream.addEventListener("removetrack", onTrackChange)
     stream.getVideoTracks().forEach((track) => {
-      track.addEventListener("unmute", checkTracks)
-      track.addEventListener("mute", checkTracks)
-      track.addEventListener("ended", checkTracks)
+      track.addEventListener("unmute", tryPlay)
     })
 
+    if (stream.getVideoTracks().some((t) => t.readyState === "live" && t.enabled)) {
+      setIsPlaying(true)
+    }
+
     return () => {
-      stream.removeEventListener("addtrack", checkTracks)
-      stream.removeEventListener("removetrack", checkTracks)
+      video.removeEventListener("loadedmetadata", onLoadedMetadata)
+      video.removeEventListener("loadeddata", onLoadedMetadata)
+      video.removeEventListener("canplay", tryPlay)
+      video.removeEventListener("playing", onPlaying)
+      video.removeEventListener("resize", onLoadedMetadata)
+      stream.removeEventListener("addtrack", onTrackChange)
+      stream.removeEventListener("removetrack", onTrackChange)
       stream.getVideoTracks().forEach((track) => {
-        track.removeEventListener("unmute", checkTracks)
-        track.removeEventListener("mute", checkTracks)
-        track.removeEventListener("ended", checkTracks)
+        track.removeEventListener("unmute", tryPlay)
       })
     }
   }, [stream])
@@ -350,10 +430,10 @@ function RemoteVideoCard({
         playsInline
         muted
         className={`h-full w-full object-cover transition-opacity duration-300 ${
-          hasLiveVideo ? "opacity-100" : "opacity-0"
+          isPlaying ? "opacity-100" : "opacity-0"
         }`}
       />
-      {!hasLiveVideo && (
+      {!isPlaying && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-void/80 p-2 text-center">
           <span className="flex h-9 w-9 items-center justify-center rounded-full border border-fog/20 bg-smoke font-mono text-xs text-breath">
             {member.name.slice(0, 2).toUpperCase()}

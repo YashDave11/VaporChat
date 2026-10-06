@@ -10,6 +10,7 @@ import { Composer } from "./Composer"
 import { SharePanel } from "./SharePanel"
 import { CallDock } from "./CallDock"
 import { CallPromptModal } from "./CallPromptModal"
+import { IncomingCallModal } from "./IncomingCallModal"
 import { useWebRTC } from "./useWebRTC"
 
 /**
@@ -27,6 +28,7 @@ export function Room({ session }: { session: ChatSession }) {
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [callPromptOpen, setCallPromptOpen] = useState(false)
+  const [dismissedCallKey, setDismissedCallKey] = useState<string | null>(null)
 
   const rtc = useWebRTC(session.callState, session.stage.view === "room")
 
@@ -124,6 +126,46 @@ export function Room({ session }: { session: ChatSession }) {
     [rtc]
   )
 
+  // Track other members in an active call
+  const otherCallMembers = session.callState.members.filter(
+    (m) => m.peerId !== room?.selfId
+  )
+  const activeCallKey = otherCallMembers.map((m) => m.peerId).sort().join(",")
+
+  // Automatically reset declined state when the previous call finishes
+  useEffect(() => {
+    if (!session.callState.active || otherCallMembers.length === 0) {
+      setDismissedCallKey(null)
+    }
+  }, [session.callState.active, otherCallMembers.length])
+
+  // Display incoming call alert when another member is in call and we haven't joined or dismissed
+  const showIncomingCall =
+    session.callState.active &&
+    !rtc.inCall &&
+    !rtc.isStarting &&
+    otherCallMembers.length > 0 &&
+    dismissedCallKey !== activeCallKey
+
+  const incomingCaller = otherCallMembers[0]
+  const incomingMode: CallMode = otherCallMembers.some(
+    (m) => m.mode === "video" || m.videoEnabled
+  )
+    ? "video"
+    : "audio"
+
+  const onAcceptIncomingCall = useCallback(
+    (chosenMode: CallMode) => {
+      setDismissedCallKey(null)
+      void rtc.startCall(chosenMode)
+    },
+    [rtc]
+  )
+
+  const onDeclineIncomingCall = useCallback(() => {
+    setDismissedCallKey(activeCallKey)
+  }, [activeCallKey])
+
   const oneToOne = room ? ROOM_RULES[room.kind].oneToOne : false
 
   /**
@@ -208,6 +250,15 @@ export function Room({ session }: { session: ChatSession }) {
         <CallPromptModal
           onStart={onStartFromPrompt}
           onCancel={() => setCallPromptOpen(false)}
+        />
+      )}
+
+      {showIncomingCall && incomingCaller && (
+        <IncomingCallModal
+          callerName={incomingCaller.name}
+          mode={incomingMode}
+          onAccept={onAcceptIncomingCall}
+          onDecline={onDeclineIncomingCall}
         />
       )}
     </div>
