@@ -29,13 +29,18 @@ export interface WebRTCController {
   inCall: boolean
   isStarting: boolean
   isMuted: boolean
+  speakingWhileMuted: boolean
+  pttEnabled: boolean
   remoteStreams: Map<string, MediaStream>
   speakingPeers: Set<string>
+  peerVolumes: Map<string, number>
   callDuration: number
   error: string | null
   startCall: () => Promise<void>
   leaveCall: () => void
   toggleMute: () => void
+  togglePtt: () => void
+  setPttPressed: (pressed: boolean) => void
   clearError: () => void
 }
 
@@ -43,12 +48,16 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   const [inCall, setInCall] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
+  const [speakingWhileMuted, setSpeakingWhileMuted] = useState(false)
+  const [pttEnabled, setPttEnabled] = useState(false)
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
   const [speakingPeers, setSpeakingPeers] = useState<Set<string>>(new Set())
+  const [peerVolumes, setPeerVolumes] = useState<Map<string, number>>(new Map())
   const [callDuration, setCallDuration] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const localStreamRef = useRef<MediaStream | null>(null)
+  const analyserTrackRef = useRef<MediaStreamTrack | null>(null)
   const peersRef = useRef<Map<string, PeerConnectionBundle>>(new Map())
   const inCallRef = useRef(false)
   inCallRef.current = inCall
@@ -56,13 +65,17 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   const isMutedRef = useRef(false)
   isMutedRef.current = isMuted
 
-  // Web Audio analyzer for speaking detection
+  const pttEnabledRef = useRef(false)
+  pttEnabledRef.current = pttEnabled
+
+  // Web Audio analyzer for speaking & amplitude detection
   const audioCtxRef = useRef<AudioContext | null>(null)
   const localAnalyserRef = useRef<AnalyserNode | null>(null)
   const remoteAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map())
   const animFrameRef = useRef<number | null>(null)
+  const mutedSpeechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Call timer
+  // Call duration timer
   useEffect(() => {
     if (!inCall) {
       setCallDuration(0)
@@ -87,22 +100,39 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     return audioCtxRef.current
   }, [])
 
-  // Hook up audio level detection loop
+  // Hook up audio level & amplitude detection loop
   const startVolumeDetection = useCallback(() => {
     const actx = ensureAudioContext()
     if (!actx) return
 
     const dataArray = new Uint8Array(64)
-    const checkVolumes = () => {
-      const speaking = new Set<string>()
+    let lastVolumeUpdate = 0
 
-      // Check local user (if not muted)
-      if (!isMutedRef.current && localAnalyserRef.current) {
+    const checkVolumes = (now: number) => {
+      const speaking = new Set<string>()
+      const currentVolumes = new Map<string, number>()
+
+      // Check local user (via dedicated unmuted analyser track)
+      if (localAnalyserRef.current) {
         localAnalyserRef.current.getByteFrequencyData(dataArray)
         let sum = 0
         for (let i = 0; i < dataArray.length; i++) sum += dataArray[i]
         const avg = sum / dataArray.length
-        if (avg > 14) speaking.add("local")
+        const normalized = Math.min(1, avg / 45)
+        currentVolumes.set("local", normalized)
+
+        if (!isMutedRef.current) {
+          if (avg > 12) speaking.add("local")
+        } else {
+          // Detect speech while muted
+          if (avg > 16) {
+            setSpeakingWhileMuted(true)
+            if (mutedSpeechTimerRef.current) clearTimeout(mutedSpeechTimerRef.current)
+            mutedSpeechTimerRef.current = setTimeout(() => {
+              setSpeakingWhileMuted(false)
+            }, 1800)
+          }
+        }
       }
 
       // Check remote users
@@ -111,15 +141,24 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
         let sum = 0
         for (let i = 0; i < dataArray.length; i++) sum += dataArray[i]
         const avg = sum / dataArray.length
-        if (avg > 14) speaking.add(peerId)
+        const normalized = Math.min(1, avg / 45)
+        currentVolumes.set(peerId, normalized)
+        if (avg > 12) speaking.add(peerId)
       })
 
+      // Update speaking peer badges
       setSpeakingPeers((prev) => {
         if (prev.size === speaking.size && [...prev].every((x) => speaking.has(x))) {
           return prev
         }
         return speaking
       })
+
+      // Throttle state update of volume maps (approx 30fps for buttery UI without React overload)
+      if (now - lastVolumeUpdate > 33) {
+        lastVolumeUpdate = now
+        setPeerVolumes(currentVolumes)
+      }
 
       animFrameRef.current = requestAnimationFrame(checkVolumes)
     }
@@ -233,6 +272,11 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       animFrameRef.current = null
     }
 
+    if (mutedSpeechTimerRef.current) {
+      clearTimeout(mutedSpeechTimerRef.current)
+      mutedSpeechTimerRef.current = null
+    }
+
     // Stop and clean up all peer connections
     peersRef.current.forEach((bundle) => {
       bundle.pc.close()
@@ -242,17 +286,23 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     remoteAnalysersRef.current.clear()
     localAnalyserRef.current = null
 
-    // Stop local hardware tracks
+    // Stop local hardware tracks and clone analyser track
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop())
       localStreamRef.current = null
     }
+    if (analyserTrackRef.current) {
+      analyserTrackRef.current.stop()
+      analyserTrackRef.current = null
+    }
 
     setRemoteStreams(new Map())
     setSpeakingPeers(new Set())
+    setPeerVolumes(new Map())
     setInCall(false)
     setIsStarting(false)
     setIsMuted(false)
+    setSpeakingWhileMuted(false)
 
     playCue("call_leave")
     getSocket().emit("call:leave")
@@ -271,17 +321,24 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
       localStreamRef.current = stream
       setIsMuted(false)
+      setSpeakingWhileMuted(false)
       setInCall(true)
 
-      // Connect local audio analyser
+      // Connect local audio analyser using a cloned track so it still hears volume when muted
       const actx = ensureAudioContext()
       if (actx) {
-        const source = actx.createMediaStreamSource(stream)
-        const analyser = actx.createAnalyser()
-        analyser.fftSize = 64
-        analyser.smoothingTimeConstant = 0.4
-        source.connect(analyser)
-        localAnalyserRef.current = analyser
+        const primaryTrack = stream.getAudioTracks()[0]
+        if (primaryTrack) {
+          const cloneTrack = primaryTrack.clone()
+          analyserTrackRef.current = cloneTrack
+          const analyserStream = new MediaStream([cloneTrack])
+          const source = actx.createMediaStreamSource(analyserStream)
+          const analyser = actx.createAnalyser()
+          analyser.fftSize = 64
+          analyser.smoothingTimeConstant = 0.4
+          source.connect(analyser)
+          localAnalyserRef.current = analyser
+        }
       }
 
       playCue("call_join")
@@ -307,10 +364,42 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       track.enabled = !next
     })
     setIsMuted(next)
+    if (!next) setSpeakingWhileMuted(false)
     getSocket().emit("call:state_update", {
       muted: next,
     })
   }, [])
+
+  // Push-to-Talk controls
+  const togglePtt = useCallback(() => {
+    const next = !pttEnabledRef.current
+    setPttEnabled(next)
+    if (next) {
+      // Enabling PTT defaults to muted state
+      if (!isMutedRef.current) {
+        toggleMute()
+      }
+    }
+  }, [toggleMute])
+
+  const setPttPressed = useCallback(
+    (pressed: boolean) => {
+      if (!localStreamRef.current || !pttEnabledRef.current) return
+      // When pressed, mic is unmuted; when released, mic is muted
+      const shouldMute = !pressed
+      if (isMutedRef.current !== shouldMute) {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = pressed
+        })
+        setIsMuted(shouldMute)
+        if (pressed) setSpeakingWhileMuted(false)
+        getSocket().emit("call:state_update", {
+          muted: shouldMute,
+        })
+      }
+    },
+    []
+  )
 
   const clearError = useCallback(() => setError(null), [])
 
@@ -471,13 +560,18 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     inCall,
     isStarting,
     isMuted,
+    speakingWhileMuted,
+    pttEnabled,
     remoteStreams,
     speakingPeers,
+    peerVolumes,
     callDuration,
     error,
     startCall,
     leaveCall,
     toggleMute,
+    togglePtt,
+    setPttPressed,
     clearError,
   }
 }

@@ -118,12 +118,24 @@ export function Room({ session }: { session: ChatSession }) {
   )
   const activeCallKey = otherCallMembers.map((m) => m.peerId).sort().join(",")
 
-  // Automatically reset declined state when the previous call finishes
+  // Automatically reset declined state when the previous call finishes completely
   useEffect(() => {
     if (!session.callState.active || otherCallMembers.length === 0) {
       setDismissedCallKey(null)
     }
   }, [session.callState.active, otherCallMembers.length])
+
+  // Track previous inCall state to prevent auto-ring when user leaves the call
+  const prevInCallRef = useRef(rtc.inCall)
+  useEffect(() => {
+    if (prevInCallRef.current && !rtc.inCall) {
+      // User just left the call — dismiss active call key so they are NOT auto-rung by the remaining callers!
+      if (activeCallKey) {
+        setDismissedCallKey(activeCallKey)
+      }
+    }
+    prevInCallRef.current = rtc.inCall
+  }, [rtc.inCall, activeCallKey])
 
   // Display incoming call alert when another member is in call and we haven't joined or dismissed
   const showIncomingCall =
@@ -144,6 +156,19 @@ export function Room({ session }: { session: ChatSession }) {
     setDismissedCallKey(activeCallKey)
   }, [activeCallKey])
 
+  // Wrap leaveCall to immediately register call dismissal and prevent any auto-ring loop
+  const onLeaveCall = useCallback(() => {
+    if (activeCallKey) {
+      setDismissedCallKey(activeCallKey)
+    }
+    rtc.leaveCall()
+  }, [rtc, activeCallKey])
+
+  const rtcWithDismiss = {
+    ...rtc,
+    leaveCall: onLeaveCall,
+  }
+
   const oneToOne = room ? ROOM_RULES[room.kind].oneToOne : false
 
   /**
@@ -152,10 +177,10 @@ export function Room({ session }: { session: ChatSession }) {
    * group this member just leaves and returns to the gate.
    */
   const confirmedVaporize = useCallback(() => {
-    if (rtc.inCall) rtc.leaveCall()
+    if (rtc.inCall) onLeaveCall()
     setConfirmOpen(false)
     vaporize(oneToOne)
-  }, [vaporize, oneToOne, rtc])
+  }, [vaporize, oneToOne, rtc.inCall, onLeaveCall])
 
   if (!room) return null
 
@@ -185,11 +210,42 @@ export function Room({ session }: { session: ChatSession }) {
 
       {rtc.inCall && (
         <CallDock
-          rtc={rtc}
+          rtc={rtcWithDismiss}
           callState={session.callState}
           selfName={room.name}
           selfId={room.selfId}
         />
+      )}
+
+      {/* Ongoing call banner for members not in call (declined or previously left) */}
+      {session.callState.active && !rtc.inCall && otherCallMembers.length > 0 && (
+        <div className="mb-2.5 flex items-center justify-between rounded-sm border border-signal/30 bg-smoke/90 p-2 px-3 font-mono text-xs shadow-[0_4px_16px_rgba(0,0,0,0.3)] backdrop-blur-sm">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-signal" />
+            </span>
+            <div className="flex items-center gap-2 truncate text-[11px] text-fog">
+              <span className="text-breath font-medium">Voice call ongoing</span>
+              <span className="text-fog-dim hidden sm:inline">·</span>
+              <span className="text-signal truncate hidden sm:inline">
+                {otherCallMembers.map((m) => m.name).join(", ")}
+              </span>
+              <span className="text-fog-dim">
+                ({otherCallMembers.length} {otherCallMembers.length === 1 ? "person" : "people"})
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onStartVoiceCall}
+            className="shrink-0 flex items-center gap-1.5 rounded-sm border border-signal/50 bg-signal/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-signal hover:bg-signal/25 hover:border-signal/80 cursor-pointer shadow-[0_0_10px_rgba(169,232,220,0.2)] transition-all"
+            title="Join the active voice call"
+          >
+            <span>Join Call</span>
+            <span>↗</span>
+          </button>
+        </div>
       )}
 
       <MessageList
@@ -340,28 +396,35 @@ function ChatHeader({
                 ? `Join voice call (${callState.members.length} in call)`
                 : "Start ephemeral voice call"
             }
-            className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+            className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
               callState.active
-                ? "border-signal/50 bg-signal/10 text-signal hover:bg-signal/20"
+                ? "border-signal/60 bg-signal/15 text-signal shadow-[0_0_12px_rgba(169,232,220,0.25)] hover:bg-signal/25"
                 : "border-fog/20 bg-smoke text-fog hover:border-signal/40 hover:text-signal"
             }`}
           >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              className="shrink-0 transition-transform duration-300 group-hover:scale-110"
-            >
-              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-            </svg>
-            <span className="hidden xs:inline">
-              {callState.active ? "join call" : "call"}
+            {callState.active ? (
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-signal" />
+              </span>
+            ) : (
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className="shrink-0 transition-transform duration-300 group-hover:scale-110"
+              >
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+              </svg>
+            )}
+            <span className={callState.active ? "font-semibold" : "hidden xs:inline"}>
+              {callState.active ? `Join Call (${callState.members.length})` : "call"}
             </span>
           </button>
         )}
