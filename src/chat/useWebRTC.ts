@@ -4,25 +4,43 @@ import { getSocket } from "./socket"
 import { playCue } from "@/lib/sound"
 
 const ICE_SERVERS: RTCIceServer[] = [
+  // Google Public STUN
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
   { urls: "stun:stun2.l.google.com:19302" },
   { urls: "stun:stun3.l.google.com:19302" },
   { urls: "stun:stun4.l.google.com:19302" },
+  // OpenRelay Public Free STUN & TURN Relays (metered.ca)
+  { urls: "stun:openrelay.metered.ca:80" },
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelay",
+    credential: "openrelay",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelay",
+    credential: "openrelay",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443?transport=tcp",
+    username: "openrelay",
+    credential: "openrelay",
+  },
 ]
 
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
   noiseSuppression: true,
   autoGainControl: true,
-  channelCount: 1,
-  sampleRate: { ideal: 48000 },
 }
 
 interface PeerConnectionBundle {
   pc: RTCPeerConnection
+  audioElement: HTMLAudioElement
   remoteStream: MediaStream
   pendingCandidates: RTCIceCandidateInit[]
+  makingOffer: boolean
 }
 
 export interface WebRTCController {
@@ -187,19 +205,44 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   }, [ensureAudioContext])
 
   const createPeerConnection = useCallback((peerId: string): PeerConnectionBundle => {
+    const existing = peersRef.current.get(peerId)
+    if (existing && existing.pc.signalingState !== "closed") {
+      return existing
+    }
+
+    console.log(`[VaporCall] Creating peer connection for: ${peerId}`)
     const pc = new RTCPeerConnection({
       iceServers: ICE_SERVERS,
       iceCandidatePoolSize: 2,
     })
 
+    // Dedicated HTMLAudioElement mounted in DOM to prevent GC and mobile power-saving throttling
+    const audioElement = new Audio()
+    audioElement.autoplay = true
+    audioElement.setAttribute("playsinline", "true")
+    audioElement.volume = 1.0
+    audioElement.muted = false
+    audioElement.style.position = "fixed"
+    audioElement.style.opacity = "0"
+    audioElement.style.pointerEvents = "none"
+    audioElement.style.width = "1px"
+    audioElement.style.height = "1px"
+    audioElement.style.bottom = "0"
+    audioElement.style.left = "0"
+    if (typeof document !== "undefined" && document.body) {
+      document.body.appendChild(audioElement)
+    }
+
     const remoteStream = new MediaStream()
     const bundle: PeerConnectionBundle = {
       pc,
+      audioElement,
       remoteStream,
       pendingCandidates: [],
+      makingOffer: false,
     }
 
-    // Attach local audio track or add audio transceiver
+    // Attach local audio track if ready, or register transceiver
     const audioTrack = localStreamRef.current?.getAudioTracks()[0]
     if (audioTrack) {
       pc.addTrack(audioTrack, localStreamRef.current!)
@@ -225,37 +268,49 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
     }
 
-    // Handle incoming remote media tracks
+    // Handle incoming remote media tracks directly on the audio element
     pc.ontrack = (event) => {
-      if (event.track) {
-        if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
-          remoteStream.addTrack(event.track)
-        }
-      }
-      if (event.streams && event.streams[0]) {
-        event.streams[0].getTracks().forEach((track) => {
-          if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
-            remoteStream.addTrack(track)
-          }
+      console.log(`[VaporCall] ontrack from ${peerId}:`, event.track.kind)
+      const incomingStream = event.streams[0] || new MediaStream([event.track])
+      bundle.remoteStream = incomingStream
+      bundle.audioElement.srcObject = incomingStream
+
+      const playAudio = () => {
+        bundle.audioElement.play().catch((err) => {
+          console.warn(`[VaporCall] Audio play waiting for user gesture (${peerId}):`, err)
         })
       }
 
-      pc.getReceivers().forEach((receiver) => {
-        if (receiver.track && !remoteStream.getTracks().some((t) => t.id === receiver.track.id)) {
-          remoteStream.addTrack(receiver.track)
-        }
-      })
+      playAudio()
+      event.track.onunmute = () => {
+        console.log(`[VaporCall] Track unmuted from ${peerId}`)
+        playAudio()
+      }
 
-      attachRemoteAnalyser(peerId, remoteStream)
+      // Clone track for Web Audio analyser so Chrome doesn't intercept or mute primary playback!
+      try {
+        const clone = event.track.clone()
+        attachRemoteAnalyser(peerId, new MediaStream([clone]))
+      } catch (err) {
+        console.warn("[VaporCall] Error attaching remote analyser:", err)
+      }
 
       setRemoteStreams((prev) => {
         const updated = new Map(prev)
-        updated.set(peerId, remoteStream)
+        updated.set(peerId, incomingStream)
         return updated
       })
     }
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[VaporCall] ICE connection state with ${peerId}:`, pc.iceConnectionState)
+      if (pc.iceConnectionState === "failed") {
+        void pc.restartIce()
+      }
+    }
+
     pc.onconnectionstatechange = () => {
+      console.log(`[VaporCall] Peer connection state with ${peerId}:`, pc.connectionState)
       if (pc.connectionState === "failed" || pc.connectionState === "closed") {
         remoteAnalysersRef.current.delete(peerId)
       }
@@ -267,6 +322,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
   // Leave call and clean up
   const leaveCall = useCallback(() => {
+    inCallRef.current = false
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current)
       animFrameRef.current = null
@@ -277,8 +333,13 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       mutedSpeechTimerRef.current = null
     }
 
-    // Stop and clean up all peer connections
+    // Stop and clean up all peer connections & audio elements
     peersRef.current.forEach((bundle) => {
+      bundle.audioElement.pause()
+      bundle.audioElement.srcObject = null
+      if (bundle.audioElement.parentNode) {
+        bundle.audioElement.parentNode.removeChild(bundle.audioElement)
+      }
       bundle.pc.close()
     })
     peersRef.current.clear()
@@ -320,31 +381,45 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       })
 
       localStreamRef.current = stream
+      inCallRef.current = true
       setIsMuted(false)
       setSpeakingWhileMuted(false)
       setInCall(true)
 
+      // Ensure local tracks are attached or updated on any existing peer connections
+      const primaryTrack = stream.getAudioTracks()[0]
+      if (primaryTrack) {
+        peersRef.current.forEach((bundle) => {
+          const senders = bundle.pc.getSenders()
+          const audioSender = senders.find((s) => !s.track || s.track.kind === "audio")
+          if (audioSender) {
+            void audioSender.replaceTrack(primaryTrack).catch(() => {})
+          } else {
+            bundle.pc.addTrack(primaryTrack, stream)
+          }
+        })
+      }
+
       // Connect local audio analyser using a cloned track so it still hears volume when muted
       const actx = ensureAudioContext()
-      if (actx) {
-        const primaryTrack = stream.getAudioTracks()[0]
-        if (primaryTrack) {
-          const cloneTrack = primaryTrack.clone()
-          analyserTrackRef.current = cloneTrack
-          const analyserStream = new MediaStream([cloneTrack])
-          const source = actx.createMediaStreamSource(analyserStream)
-          const analyser = actx.createAnalyser()
-          analyser.fftSize = 64
-          analyser.smoothingTimeConstant = 0.4
-          source.connect(analyser)
-          localAnalyserRef.current = analyser
-        }
+      if (actx && primaryTrack) {
+        const cloneTrack = primaryTrack.clone()
+        analyserTrackRef.current = cloneTrack
+        const analyserStream = new MediaStream([cloneTrack])
+        const source = actx.createMediaStreamSource(analyserStream)
+        const analyser = actx.createAnalyser()
+        analyser.fftSize = 64
+        analyser.smoothingTimeConstant = 0.4
+        source.connect(analyser)
+        localAnalyserRef.current = analyser
       }
 
       playCue("call_join")
       getSocket().emit("call:join")
       startVolumeDetection()
     } catch (err) {
+      inCallRef.current = false
+      setInCall(false)
       const message = err instanceof Error ? err.message : "Media device access denied"
       setError(
         message.includes("Permission") || message.includes("denied")
@@ -418,17 +493,32 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
       if (signal.type === "offer") {
         try {
+          console.log(`[VaporCall] Processing offer from ${from}`)
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp as RTCSessionDescriptionInit))
+
           while (bundle.pendingCandidates.length > 0) {
             const cand = bundle.pendingCandidates.shift()
             if (cand) {
               try {
-                await pc.addIceCandidate(cand)
-              } catch {
-                // ignore
+                await pc.addIceCandidate(new RTCIceCandidate(cand))
+              } catch (e) {
+                console.warn("[VaporCall] Add queued candidate failed:", e)
               }
             }
           }
+
+          // Ensure local audio track is attached before answering
+          const audioTrack = localStreamRef.current?.getAudioTracks()[0]
+          if (audioTrack) {
+            const senders = pc.getSenders()
+            const audioSender = senders.find((s) => !s.track || s.track.kind === "audio")
+            if (audioSender) {
+              void audioSender.replaceTrack(audioTrack).catch(() => {})
+            } else {
+              pc.addTrack(audioTrack, localStreamRef.current!)
+            }
+          }
+
           const answer = await pc.createAnswer()
           await pc.setLocalDescription(answer)
           socket.emit("call:signal", {
@@ -438,35 +528,37 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
               sdp: { type: answer.type, sdp: answer.sdp },
             },
           })
-        } catch {
-          // ignore negotiation error
+        } catch (err) {
+          console.error("[VaporCall] Error handling offer:", err)
         }
       } else if (signal.type === "answer") {
         try {
+          console.log(`[VaporCall] Processing answer from ${from}`)
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp as RTCSessionDescriptionInit))
+
           while (bundle.pendingCandidates.length > 0) {
             const cand = bundle.pendingCandidates.shift()
             if (cand) {
               try {
-                await pc.addIceCandidate(cand)
-              } catch {
-                // ignore
+                await pc.addIceCandidate(new RTCIceCandidate(cand))
+              } catch (e) {
+                console.warn("[VaporCall] Add queued candidate failed:", e)
               }
             }
           }
-        } catch {
-          // ignore
+        } catch (err) {
+          console.error("[VaporCall] Error handling answer:", err)
         }
       } else if (signal.type === "candidate") {
         if (signal.candidate && signal.candidate.candidate) {
           try {
-            if (pc.remoteDescription) {
-              await pc.addIceCandidate(signal.candidate as RTCIceCandidateInit)
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate as RTCIceCandidateInit))
             } else {
               bundle.pendingCandidates.push(signal.candidate as RTCIceCandidateInit)
             }
-          } catch {
-            // ignore
+          } catch (err) {
+            console.warn("[VaporCall] Candidate handling error:", err)
           }
         }
       }
@@ -492,8 +584,10 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       if (member.peerId === myId) return
       if (!peersRef.current.has(member.peerId)) {
         if (myId < member.peerId) {
+          console.log(`[VaporCall] Initiating offer to ${member.peerId}`)
           const bundle = createPeerConnection(member.peerId)
           try {
+            bundle.makingOffer = true
             const offer = await bundle.pc.createOffer()
             await bundle.pc.setLocalDescription(offer)
             socket.emit("call:signal", {
@@ -503,34 +597,23 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
                 sdp: { type: offer.type, sdp: offer.sdp },
               },
             })
-          } catch {
-            // ignore
+          } catch (err) {
+            console.error(`[VaporCall] Failed to create offer for ${member.peerId}:`, err)
+          } finally {
+            bundle.makingOffer = false
           }
         }
-      }
-    })
-
-    // Sync any newly available audio tracks from receivers
-    peersRef.current.forEach((bundle, peerId) => {
-      let changed = false
-      bundle.pc.getReceivers().forEach((receiver) => {
-        if (receiver.track && !bundle.remoteStream.getTracks().some((t) => t.id === receiver.track.id)) {
-          bundle.remoteStream.addTrack(receiver.track)
-          changed = true
-        }
-      })
-      if (changed) {
-        setRemoteStreams((prev) => {
-          const next = new Map(prev)
-          next.set(peerId, bundle.remoteStream)
-          return next
-        })
       }
     })
 
     // Clean up peers who left the call
     peersRef.current.forEach((bundle, peerId) => {
       if (!memberIds.has(peerId)) {
+        bundle.audioElement.pause()
+        bundle.audioElement.srcObject = null
+        if (bundle.audioElement.parentNode) {
+          bundle.audioElement.parentNode.removeChild(bundle.audioElement)
+        }
         bundle.pc.close()
         peersRef.current.delete(peerId)
         remoteAnalysersRef.current.delete(peerId)
@@ -542,6 +625,30 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
     })
   }, [callState.members, inCall, createPeerConnection])
+
+  // Global user gesture listener to unlock audio playback in restricted browsers
+  useEffect(() => {
+    const unlock = () => {
+      if (audioCtxRef.current?.state === "suspended") {
+        void audioCtxRef.current.resume().catch(() => {})
+      }
+      peersRef.current.forEach((bundle) => {
+        if (bundle.audioElement.srcObject && bundle.audioElement.paused) {
+          void bundle.audioElement.play().catch(() => {})
+        }
+      })
+    }
+
+    window.addEventListener("click", unlock, { passive: true })
+    window.addEventListener("touchstart", unlock, { passive: true })
+    window.addEventListener("keydown", unlock, { passive: true })
+
+    return () => {
+      window.removeEventListener("click", unlock)
+      window.removeEventListener("touchstart", unlock)
+      window.removeEventListener("keydown", unlock)
+    }
+  }, [])
 
   // Clean up if room closes or unmounts
   useEffect(() => {

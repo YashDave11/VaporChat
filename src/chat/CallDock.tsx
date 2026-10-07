@@ -59,7 +59,6 @@ export function CallDock({
     isMuted,
     speakingWhileMuted,
     pttEnabled,
-    remoteStreams,
     speakingPeers,
     peerVolumes,
     callDuration,
@@ -110,11 +109,6 @@ export function CallDock({
 
   return (
     <>
-      {/* Invisible DOM-mounted audio receivers for remote audio streams */}
-      {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
-        <RemoteAudioTrack key={peerId} stream={stream} />
-      ))}
-
       {isCollapsed ? (
         /* FLOATING COMPACT CALL BAR */
         <div
@@ -434,57 +428,5 @@ export function CallDock({
         </div>
       )}
     </>
-  )
-}
-
-function RemoteAudioTrack({ stream }: { stream: MediaStream }) {
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !stream) return
-
-    audio.srcObject = stream
-    audio.volume = 1.0
-
-    const playAudio = () => {
-      audio.play().catch((err) => {
-        console.warn("[VaporCall] Audio playback waiting for gesture:", err)
-      })
-    }
-
-    playAudio()
-
-    // Unlock on any user gesture in case browser restricted autoplay
-    const unlock = () => {
-      if (audio.paused) {
-        void audio.play().catch(() => {})
-      }
-    }
-
-    window.addEventListener("click", unlock, { passive: true })
-    window.addEventListener("touchstart", unlock, { passive: true })
-    window.addEventListener("keydown", unlock, { passive: true })
-
-    const onAddTrack = () => playAudio()
-    stream.addEventListener("addtrack", onAddTrack)
-
-    return () => {
-      window.removeEventListener("click", unlock)
-      window.removeEventListener("touchstart", unlock)
-      window.removeEventListener("keydown", unlock)
-      stream.removeEventListener("addtrack", onAddTrack)
-    }
-  }, [stream])
-
-  return (
-    <audio
-      ref={audioRef}
-      autoPlay
-      playsInline
-      controls={false}
-      className="hidden"
-      aria-hidden="true"
-    />
   )
 }
