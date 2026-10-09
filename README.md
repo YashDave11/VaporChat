@@ -54,6 +54,7 @@ a room, the garbage collector is the delete button.
 |---|---|
 | 🎲 **Find a stranger** | Anonymous 1v1 matchmaking with a mutual-consent handshake — the room only opens if you *both* say yes. Declined pairs won't be shown to each other again for 10 minutes. |
 | 📡 **Open rooms** | A live directory of discoverable group rooms, up to 10 voices each. Join a conversation already in the air. |
+| 🎙️ **Ephemeral voice** | Peer-to-peer WebRTC voice calls in any room — sound-reactive avatar tiles, speaking rings, push-to-talk, and mute. Audio flows directly between browsers; the server only relays the handshake and stores nothing. |
 | 🔑 **Private rooms** | Keyed 1v1 or group rooms — invisible to the directory, joinable only by a 4-character key or an invite link. |
 | 💨 **Vaporize** | One exit button. In a 1v1 it ends the room for both sides; in a group it just takes you out. |
 | ↩️ **Quoted replies** | Replies carry their own excerpt over the wire — the server stores nothing, so the quote *is* the context. |
@@ -110,6 +111,12 @@ a room, the garbage collector is the delete button.
 room rule is declared once and consumed by the server, the React client and (mirrored in
 Kotlin) the Android app. The server is authoritative — it assigns ids, keys, timestamps and
 presence, and echoes your own messages back to you so there is exactly one render path.
+
+**Voice is peer-to-peer.** Calls use a WebRTC audio mesh negotiated over the same Socket.IO
+channel (a deterministic `myId < peerId` rule picks who sends the offer, avoiding glare).
+The server only relays the SDP/ICE handshake between participants — the audio itself never
+touches it. Google STUN covers most NATs out of the box; a TURN relay can be supplied by env
+for symmetric-NAT fallback.
 
 **Four room kinds, four rule sets:**
 
@@ -171,6 +178,9 @@ reload — open two browser windows and talk to yourself.
 |---|---|
 | `VITE_API_URL` | `https://api.vapor.chat` |
 | `VITE_PUBLIC_APP_ORIGIN` | `https://www.vaporchat.dev` — canonical origin for invite links |
+| `VITE_TURN_URL` | `turn:turn.example.com:3478` — optional TURN relay for voice behind symmetric NATs (comma-separate for multiple). Google STUN is used by default; without TURN, calls still work on most networks |
+| `VITE_TURN_USERNAME` | TURN credential username (only if `VITE_TURN_URL` is set) |
+| `VITE_TURN_CREDENTIAL` | TURN credential password (only if `VITE_TURN_URL` is set) |
 
 </details>
 

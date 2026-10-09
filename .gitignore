@@ -30,3 +30,7 @@ dist-ssr
 
 # Android native wrapper — build artifacts and local SDK paths
 android/
+
+# AI tooling scratch/context output — not part of the app
+brag-output/
+context/

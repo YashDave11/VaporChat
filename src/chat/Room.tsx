@@ -112,9 +112,12 @@ export function Room({ session }: { session: ChatSession }) {
     void rtc.startCall()
   }, [rtc])
 
-  // Track other members in an active call
+  // Track other members in an active call. Call membership is keyed by socket
+  // id (rtc.selfId) — NOT room.selfId, which is the stable seat id (m-…) and
+  // never matches a call peerId. Using the wrong one left you in your own
+  // "others" list: a phantom second tile, and a re-ring the instant you left.
   const otherCallMembers = session.callState.members.filter(
-    (m) => m.peerId !== room?.selfId
+    (m) => m.peerId !== rtc.selfId
   )
   const activeCallKey = otherCallMembers.map((m) => m.peerId).sort().join(",")
 
@@ -213,7 +216,7 @@ export function Room({ session }: { session: ChatSession }) {
           rtc={rtcWithDismiss}
           callState={session.callState}
           selfName={room.name}
-          selfId={room.selfId}
+          selfId={rtc.selfId}
         />
       )}
 
@@ -365,27 +368,46 @@ function ChatHeader({
             </span>
           </span>
         </div>
+      </div>
 
+      {/* Action cluster: invite · call · vaporize. One home for every room
+          action so the share link is always findable, never crowded out by
+          the call controls the way it was when both lived beside the title. */}
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
         {room.invite && (
           <button
             type="button"
             onClick={onShare}
             title="Invite someone by link"
-            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-fog/20 bg-smoke px-2 py-1 font-mono text-[11px] text-fog transition-colors duration-300 outline-none hover:border-signal/40 hover:text-signal focus-visible:ring-2 focus-visible:ring-signal/40"
+            className="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-signal/30 bg-signal/5 px-2 py-1.5 font-mono text-[11px] text-signal transition-colors duration-300 outline-none hover:border-signal/60 hover:bg-signal/15 focus-visible:ring-2 focus-visible:ring-signal/40 sm:px-2.5"
           >
-            <span
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
               aria-hidden="true"
-              className="h-1 w-1 rounded-full bg-signal/70 transition-colors group-hover:bg-signal"
-            />
-            invite
+              className="shrink-0"
+            >
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+            <span className="hidden xs:inline">invite</span>
           </button>
         )}
 
         {/* Ephemeral voice call action button */}
         {inCall ? (
-          <span className="flex shrink-0 items-center gap-1.5 rounded-sm border border-signal/40 bg-signal/10 px-2 py-1 font-mono text-[11px] text-signal">
+          <span className="flex shrink-0 items-center gap-1.5 rounded-sm border border-signal/40 bg-signal/10 px-2.5 py-1.5 font-mono text-[11px] text-signal">
             <span className="h-1.5 w-1.5 rounded-full bg-signal animate-pulse" />
-            in call
+            <span className="hidden xs:inline">in call</span>
           </span>
         ) : (
           <button
@@ -396,7 +418,7 @@ function ChatHeader({
                 ? `Join voice call (${callState.members.length} in call)`
                 : "Start ephemeral voice call"
             }
-            className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+            className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1.5 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
               callState.active
                 ? "border-signal/60 bg-signal/15 text-signal shadow-[0_0_12px_rgba(169,232,220,0.25)] hover:bg-signal/25"
                 : "border-fog/20 bg-smoke text-fog hover:border-signal/40 hover:text-signal"
@@ -424,13 +446,12 @@ function ChatHeader({
               </svg>
             )}
             <span className={callState.active ? "font-semibold" : "hidden xs:inline"}>
-              {callState.active ? `Join Call (${callState.members.length})` : "call"}
+              {callState.active ? `Join (${callState.members.length})` : "call"}
             </span>
           </button>
         )}
-      </div>
-      <div className="flex items-center gap-3 sm:gap-4">
-        <span className="hidden font-mono text-[10px] uppercase tracking-widest text-fog-dim md:block">
+
+        <span className="hidden font-mono text-[10px] uppercase tracking-widest text-fog-dim lg:block">
           unrecorded
         </span>
         <Button variant="danger" size="sm" onClick={onVaporize}>

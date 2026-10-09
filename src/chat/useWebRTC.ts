@@ -3,30 +3,34 @@ import type { CallState, CallSignal } from "@shared/protocol"
 import { getSocket } from "./socket"
 import { playCue } from "@/lib/sound"
 
+/**
+ * STUN gets most peers connected directly. TURN (relay) is the fallback for
+ * symmetric-NAT / locked-down networks where a direct path never forms —
+ * without it, those users hear silence. The public openrelay creds that used
+ * to live here are defunct, so TURN is now injected from env
+ * (VITE_TURN_URL / VITE_TURN_USERNAME / VITE_TURN_CREDENTIAL). Drop in a
+ * working TURN server there and relay-only networks start working with no
+ * code change. VITE_TURN_URL may be a comma-separated list of urls.
+ */
+const env = import.meta.env
+const turnUrls = (env.VITE_TURN_URL ?? "")
+  .split(",")
+  .map((u: string) => u.trim())
+  .filter(Boolean)
+
 const ICE_SERVERS: RTCIceServer[] = [
-  // Google Public STUN
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
   { urls: "stun:stun2.l.google.com:19302" },
-  { urls: "stun:stun3.l.google.com:19302" },
-  { urls: "stun:stun4.l.google.com:19302" },
-  // OpenRelay Public Free STUN & TURN Relays (metered.ca)
-  { urls: "stun:openrelay.metered.ca:80" },
-  {
-    urls: "turn:openrelay.metered.ca:80",
-    username: "openrelay",
-    credential: "openrelay",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443",
-    username: "openrelay",
-    credential: "openrelay",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-    username: "openrelay",
-    credential: "openrelay",
-  },
+  ...(turnUrls.length
+    ? [
+        {
+          urls: turnUrls,
+          username: env.VITE_TURN_USERNAME,
+          credential: env.VITE_TURN_CREDENTIAL,
+        } as RTCIceServer,
+      ]
+    : []),
 ]
 
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
@@ -46,6 +50,8 @@ interface PeerConnectionBundle {
 export interface WebRTCController {
   inCall: boolean
   isStarting: boolean
+  /** our own call identity — the socket id the server keys callMembers by */
+  selfId: string
   isMuted: boolean
   speakingWhileMuted: boolean
   pttEnabled: boolean
@@ -666,6 +672,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   return {
     inCall,
     isStarting,
+    selfId: getSocket().id ?? "",
     isMuted,
     speakingWhileMuted,
     pttEnabled,

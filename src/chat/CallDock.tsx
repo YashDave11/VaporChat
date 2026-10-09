@@ -29,6 +29,83 @@ function isInputActive(): boolean {
   return false
 }
 
+// Two-letter monogram from a display name (Discord-style avatar fallback).
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return "?"
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+interface VoiceTileProps {
+  name: string
+  isSelf?: boolean
+  isSpeaking: boolean
+  isMuted: boolean
+  volume: number
+}
+
+/**
+ * Discord-style voice participant tile: a monogram avatar wrapped in a
+ * sound-reactive mint ring (the signature element) that tightens and glows
+ * with live amplitude, a mute badge, and a name label with an equalizer.
+ */
+function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume }: VoiceTileProps) {
+  // Ring intensity tracks live amplitude when speaking; muted stays dark.
+  const ringAlpha = isMuted ? 0 : isSpeaking ? 0.5 + volume * 0.5 : 0.15
+  const glow = isMuted ? 0 : isSpeaking ? 10 + volume * 26 : 0
+
+  return (
+    <div
+      className={`flex flex-col items-center gap-2 rounded-md border px-3 py-3 transition-colors duration-200 ${
+        isSpeaking && !isMuted
+          ? "border-signal/40 bg-signal/5"
+          : "border-fog/15 bg-void/40"
+      }`}
+    >
+      <div className="relative">
+        <div
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-smoke-2 to-void font-mono text-base font-semibold text-breath transition-all duration-150"
+          style={{
+            boxShadow: `0 0 0 2px rgba(169, 232, 220, ${ringAlpha})${
+              glow > 0 ? `, 0 0 ${glow}px rgba(169, 232, 220, ${0.3 + volume * 0.4})` : ""
+            }`,
+          }}
+        >
+          {initials(name)}
+        </div>
+
+        {/* Mute badge, bottom-right of avatar */}
+        {isMuted && (
+          <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-void bg-ember/90 text-void">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="1" y1="1" x2="23" y2="23" />
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+            </svg>
+          </span>
+        )}
+      </div>
+
+      <div className="flex max-w-[7rem] items-center gap-1.5">
+        <span className="truncate font-mono text-[11px] font-medium text-breath">
+          {name}
+        </span>
+        {isSelf && <span className="shrink-0 font-mono text-[10px] text-fog-dim">(you)</span>}
+      </div>
+
+      <AudioWaveform
+        isSpeaking={isSpeaking}
+        isMuted={isMuted}
+        volume={volume}
+        variant="equalizer"
+        className="h-3.5 w-10"
+      />
+    </div>
+  )
+}
+
 export function CallDock({
   rtc,
   callState,
@@ -49,6 +126,14 @@ export function CallDock({
           filter: "blur(6px)",
           duration: 0.45,
           ease: "power2.out",
+        })
+        gsap.from("[data-voice-tile]", {
+          opacity: 0,
+          scale: 0.85,
+          duration: 0.35,
+          stagger: 0.05,
+          ease: "back.out(1.6)",
+          delay: 0.1,
         })
       })
     },
@@ -102,10 +187,10 @@ export function CallDock({
   const localVol = peerVolumes.get("local") ?? 0
   const isLocalSpeaking = speakingPeers.has("local")
 
-  // Find who is currently speaking among remote members
-  const activeRemoteSpeaker = callState.members.find(
-    (m) => m.peerId !== selfId && speakingPeers.has(m.peerId)
-  )
+  const remoteMembers = callState.members.filter((m) => m.peerId !== selfId)
+
+  // Find who is currently speaking among remote members (for the collapsed bar)
+  const activeRemoteSpeaker = remoteMembers.find((m) => speakingPeers.has(m.peerId))
 
   return (
     <>
@@ -271,71 +356,30 @@ export function CallDock({
             </div>
           )}
 
-          {/* Audio Members & Sound-Reactive Aura Pills */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {/* Local user pill with dynamic sound-reactive aura */}
-            <div
-              className={`flex items-center gap-2 rounded-sm border px-2.5 py-1.5 font-mono text-[11px] transition-all duration-150 ${
-                isLocalSpeaking
-                  ? "bg-signal/10 text-breath"
-                  : "border-fog/20 bg-smoke text-fog"
-              }`}
-              style={
-                isLocalSpeaking
-                  ? {
-                      borderColor: `rgba(169, 232, 220, ${0.4 + localVol * 0.6})`,
-                      boxShadow: `0 0 ${8 + localVol * 22}px rgba(169, 232, 220, ${0.25 + localVol * 0.5}), inset 0 0 ${4 + localVol * 10}px rgba(169, 232, 220, ${0.1 + localVol * 0.3})`,
-                    }
-                  : undefined
-              }
-            >
-              <span className="font-medium text-breath">{selfName}</span>
-              <span className="text-fog-dim text-[10px]">(you)</span>
-              {isMuted && <span className="text-[10px] text-ember font-medium">· muted</span>}
-              <AudioWaveform
+          {/* Participant grid: Discord-style sound-reactive avatar tiles */}
+          <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2.5">
+            {/* Local user */}
+            <div data-voice-tile>
+              <VoiceTile
+                name={selfName}
+                isSelf
                 isSpeaking={isLocalSpeaking}
                 isMuted={isMuted}
                 volume={localVol}
-                variant="equalizer"
-                className="w-12 h-4"
               />
             </div>
 
-            {/* Remote members pills with dynamic sound-reactive aura */}
-            {callState.members
-              .filter((m) => m.peerId !== selfId)
-              .map((m) => {
-                const isSpeaking = speakingPeers.has(m.peerId)
-                const vol = peerVolumes.get(m.peerId) ?? 0
-                return (
-                  <div
-                    key={m.peerId}
-                    className={`flex items-center gap-2 rounded-sm border px-2.5 py-1.5 font-mono text-[11px] transition-all duration-150 ${
-                      isSpeaking
-                        ? "bg-signal/10 text-breath"
-                        : "border-fog/20 bg-smoke text-fog"
-                    }`}
-                    style={
-                      isSpeaking
-                        ? {
-                            borderColor: `rgba(169, 232, 220, ${0.4 + vol * 0.6})`,
-                            boxShadow: `0 0 ${8 + vol * 22}px rgba(169, 232, 220, ${0.25 + vol * 0.5}), inset 0 0 ${4 + vol * 10}px rgba(169, 232, 220, ${0.1 + vol * 0.3})`,
-                          }
-                        : undefined
-                    }
-                  >
-                    <span className="text-breath font-medium">{m.name}</span>
-                    {m.muted && <span className="text-[10px] text-ember font-medium">· muted</span>}
-                    <AudioWaveform
-                      isSpeaking={isSpeaking}
-                      isMuted={m.muted}
-                      volume={vol}
-                      variant="equalizer"
-                      className="w-12 h-4"
-                    />
-                  </div>
-                )
-              })}
+            {/* Remote members */}
+            {remoteMembers.map((m) => (
+              <div data-voice-tile key={m.peerId}>
+                <VoiceTile
+                  name={m.name}
+                  isSpeaking={speakingPeers.has(m.peerId)}
+                  isMuted={m.muted}
+                  volume={peerVolumes.get(m.peerId) ?? 0}
+                />
+              </div>
+            ))}
           </div>
 
           {/* In-Call Action Bar: Mic toggle · Push-to-Talk · Voice count */}
