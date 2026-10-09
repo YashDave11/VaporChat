@@ -65,7 +65,7 @@ function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume }: VoiceTileProps
     >
       <div className="relative">
         <div
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-smoke-2 to-void font-mono text-base font-semibold text-breath transition-all duration-150"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-smoke-2 to-void font-mono text-base font-semibold text-breath"
           style={{
             boxShadow: `0 0 0 2px rgba(169, 232, 220, ${ringAlpha})${
               glow > 0 ? `, 0 0 ${glow}px rgba(169, 232, 220, ${0.3 + volume * 0.4})` : ""
@@ -199,7 +199,7 @@ export function CallDock({
         <div
           ref={dockRef}
           data-call-dock
-          className="sticky top-2 z-30 mb-3 flex items-center justify-between gap-3 rounded-full border hairline bg-smoke/95 px-3 py-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md transition-all duration-300"
+          className="sticky top-2 z-30 mb-3 flex items-center justify-between gap-3 rounded-full border hairline bg-smoke/95 px-3 py-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md"
         >
           <div className="flex items-center gap-2.5">
             <span className="relative flex h-2 w-2">
@@ -281,7 +281,7 @@ export function CallDock({
         <div
           ref={dockRef}
           data-call-dock
-          className="relative mb-3 overflow-hidden rounded-md border hairline bg-smoke/90 p-3 shadow-[var(--shadow-panel)] backdrop-blur-md transition-all duration-300"
+          className="relative mb-3 overflow-hidden rounded-md border hairline bg-smoke/90 p-3 shadow-[var(--shadow-panel)] backdrop-blur-md"
         >
           {/* Top bar: title · timer · zero-storage badge · Collapse · Leave Call */}
           <div className="flex items-center justify-between pb-2.5 border-b hairline">
@@ -312,16 +312,6 @@ export function CallDock({
               >
                 Collapse ─
               </button>
-
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={leaveCall}
-                className="h-6 px-2 text-[11px] font-mono cursor-pointer"
-                title="Leave call and stay in chat"
-              >
-                Leave call ↗
-              </Button>
             </div>
           </div>
 
@@ -382,22 +372,24 @@ export function CallDock({
             ))}
           </div>
 
-          {/* In-Call Action Bar: Mic toggle · Push-to-Talk · Voice count */}
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t hairline">
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Mic Mute / Unmute Button */}
+          {/* In-Call Controls: centered round buttons, Discord-style, with a
+              red hang-up as the clear primary exit. */}
+          <div className="mt-3 flex flex-col items-center gap-2 pt-3 border-t hairline">
+            <div className="flex items-center gap-3">
+              {/* Mic Mute / Unmute */}
               <button
                 type="button"
                 onClick={toggleMute}
-                className={`flex cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1.5 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+                className={`flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
                   isMuted
-                    ? "border-ember/40 bg-ember/10 text-ember hover:border-ember hover:bg-ember/20"
-                    : "border-fog/25 bg-smoke text-breath hover:border-signal/40 hover:text-signal"
+                    ? "border-ember/40 bg-ember/15 text-ember hover:bg-ember/25"
+                    : "border-fog/25 bg-void/60 text-breath hover:border-signal/40 hover:text-signal"
                 }`}
                 title={isMuted ? "Unmute microphone" : "Mute microphone"}
+                aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
               >
                 {isMuted ? (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <line x1="1" y1="1" x2="23" y2="23" />
                     <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
                     <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
@@ -405,69 +397,82 @@ export function CallDock({
                     <line x1="8" y1="23" x2="16" y2="23" />
                   </svg>
                 ) : (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
                     <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                     <line x1="12" y1="19" x2="12" y2="23" />
                     <line x1="8" y1="23" x2="16" y2="23" />
                   </svg>
                 )}
-                <span>{isMuted ? "Unmute" : "Mute"}</span>
               </button>
 
-              {/* Push-to-Talk Mode Toggle */}
+              {/* Push-to-Talk mode toggle */}
               <button
                 type="button"
                 onClick={togglePtt}
-                className={`flex cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1.5 font-mono text-[11px] transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+                className={`flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
                   pttEnabled
                     ? "border-signal/50 bg-signal/15 text-signal"
-                    : "border-fog/20 bg-smoke text-fog hover:border-fog/40 hover:text-breath"
+                    : "border-fog/25 bg-void/60 text-fog hover:border-fog/50 hover:text-breath"
                 }`}
-                title="Toggle Push-to-Talk (hold Spacebar to talk)"
+                title={pttEnabled ? "Push-to-Talk on — hold Space to talk" : "Enable Push-to-Talk"}
+                aria-label="Toggle Push-to-Talk"
+                aria-pressed={pttEnabled}
               >
-                <span>PTT [Space]:</span>
-                <span className="font-semibold">{pttEnabled ? "ON" : "OFF"}</span>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                  <path d="M5 11a7 7 0 0 0 14 0" />
+                  <line x1="12" y1="18" x2="12" y2="22" />
+                </svg>
               </button>
 
-              {/* Push-to-Talk Hold Button (Useful for mobile & touch or clicking) */}
-              {pttEnabled && (
-                <button
-                  type="button"
-                  onMouseDown={() => {
-                    setPttHeld(true)
-                    setPttPressed(true)
-                  }}
-                  onMouseUp={() => {
-                    setPttHeld(false)
-                    setPttPressed(false)
-                  }}
-                  onTouchStart={(e) => {
-                    e.preventDefault()
-                    setPttHeld(true)
-                    setPttPressed(true)
-                  }}
-                  onTouchEnd={(e) => {
-                    e.preventDefault()
-                    setPttHeld(false)
-                    setPttPressed(false)
-                  }}
-                  className={`flex cursor-pointer select-none items-center gap-1.5 rounded-sm border px-3 py-1.5 font-mono text-[11px] transition-all duration-150 ${
-                    pttHeld
-                      ? "border-signal bg-signal/30 text-breath shadow-[0_0_12px_rgba(169,232,220,0.4)]"
-                      : "border-fog/30 bg-smoke text-fog hover:border-signal/40 hover:text-breath"
-                  }`}
-                  title="Press and hold Space or click and hold here to talk"
-                >
-                  <span className={`h-2 w-2 rounded-full ${pttHeld ? "bg-signal animate-ping" : "bg-fog-dim"}`} />
-                  <span>{pttHeld ? "Transmitting..." : "Hold to Talk"}</span>
-                </button>
-              )}
+              {/* Red hang-up — the clear way out */}
+              <button
+                type="button"
+                onClick={leaveCall}
+                className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-ember/50 bg-ember/90 text-void shadow-[0_0_16px_rgba(232,169,169,0.35)] transition-colors duration-200 outline-none hover:bg-ember focus-visible:ring-2 focus-visible:ring-ember/50"
+                title="Leave call"
+                aria-label="Leave call"
+              >
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-1.78 1.78c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28a11.27 11.27 0 0 0-2.66-1.85.998.998 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+                </svg>
+              </button>
             </div>
 
-            <span className="font-mono text-[10px] text-fog-dim hidden xs:inline">
-              {callState.members.length} {callState.members.length === 1 ? "voice" : "voices"} in call
-            </span>
+            {/* Hold-to-Talk pad only when PTT is on (handy on touch) */}
+            {pttEnabled && (
+              <button
+                type="button"
+                onMouseDown={() => {
+                  setPttHeld(true)
+                  setPttPressed(true)
+                }}
+                onMouseUp={() => {
+                  setPttHeld(false)
+                  setPttPressed(false)
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault()
+                  setPttHeld(true)
+                  setPttPressed(true)
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault()
+                  setPttHeld(false)
+                  setPttPressed(false)
+                }}
+                className={`flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-4 py-1.5 font-mono text-[11px] transition-colors duration-150 ${
+                  pttHeld
+                    ? "border-signal bg-signal/30 text-breath shadow-[0_0_12px_rgba(169,232,220,0.4)]"
+                    : "border-fog/30 bg-smoke text-fog hover:border-signal/40 hover:text-breath"
+                }`}
+                title="Hold Space or press and hold here to talk"
+              >
+                <span className={`h-2 w-2 rounded-full ${pttHeld ? "bg-signal animate-ping" : "bg-fog-dim"}`} />
+                <span>{pttHeld ? "Transmitting…" : "Hold to talk — or press Space"}</span>
+              </button>
+            )}
           </div>
         </div>
       )}

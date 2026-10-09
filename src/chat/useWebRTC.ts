@@ -33,6 +33,8 @@ const ICE_SERVERS: RTCIceServer[] = [
     : []),
 ]
 
+const hasTurn = turnUrls.length > 0
+
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
   noiseSuppression: true,
@@ -319,6 +321,16 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       console.log(`[VaporCall] Peer connection state with ${peerId}:`, pc.connectionState)
       if (pc.connectionState === "failed" || pc.connectionState === "closed") {
         remoteAnalysersRef.current.delete(peerId)
+      }
+      // A direct path never formed (common across different networks / strict
+      // NATs). restartIce() above gets one retry; if it still fails, the only
+      // fix is a TURN relay — tell the user instead of leaving them in silence.
+      if (pc.connectionState === "failed") {
+        setError(
+          hasTurn
+            ? "Lost the connection to someone in the call. Trying to reconnect…"
+            : "Couldn't connect to someone on a different network. A TURN relay is needed for restricted networks — see VITE_TURN_URL in the README."
+        )
       }
     }
 
