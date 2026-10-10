@@ -29,6 +29,8 @@ export interface Member {
   status: PeerStatus
   /** secret that lets a new socket reclaim this seat */
   resumeToken: string
+  /** last self-measured round-trip to the server, ms — undefined until reported */
+  ping?: number
 }
 
 export interface Room {
@@ -186,6 +188,15 @@ export function presenceSnapshot(room: Room): PeerInfo[] {
     name: m.name,
     status: m.status,
   }))
+}
+
+/** memberId → last reported round-trip (ms) for every seat that has one */
+export function pingSnapshot(room: Room): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const m of room.members.values()) {
+    if (m.ping !== undefined) out[m.id] = m.ping
+  }
+  return out
 }
 
 export function addMember(room: Room, socketId: string, name: string): Member {

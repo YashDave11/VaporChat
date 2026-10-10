@@ -14,6 +14,8 @@ interface CallDockProps {
   selfId: string
   /** everyone else in the room (seat presence) — the ring targets */
   peers: PeerInfo[]
+  /** live round-trip per room member — memberId → ms */
+  pings: Record<string, number>
   /** ring a room member (by seat id) to join the call */
   onRing: (memberId: string) => void
 }
@@ -49,6 +51,15 @@ interface VoiceTileProps {
   isMuted: boolean
   volume: number
   sharing?: boolean
+  /** last round-trip to the server in ms, or undefined if not yet measured */
+  ping?: number
+}
+
+/** mint under ~120ms, fog to ~280ms, ember beyond — a glanceable health dot */
+function pingClass(ping: number): string {
+  if (ping < 120) return "bg-signal"
+  if (ping < 280) return "bg-fog"
+  return "bg-ember"
 }
 
 /** Binds a MediaStream to a <video> and shows the live screen share. */
@@ -100,7 +111,7 @@ function ScreenStage({
  * sound-reactive mint ring (the signature element) that tightens and glows
  * with live amplitude, a mute badge, and a name label with an equalizer.
  */
-function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume, sharing }: VoiceTileProps) {
+function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume, sharing, ping }: VoiceTileProps) {
   // Ring intensity tracks live amplitude when speaking; muted stays dark.
   const ringAlpha = isMuted ? 0 : isSpeaking ? 0.5 + volume * 0.5 : 0.15
   const glow = isMuted ? 0 : isSpeaking ? 10 + volume * 26 : 0
@@ -135,15 +146,26 @@ function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume, sharing }: Voice
           </span>
         )}
 
-        {/* Mute badge, bottom-right of avatar */}
+        {/* Mute badge, top-right of avatar (ping sits bottom-right) */}
         {isMuted && (
-          <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-void bg-ember/90 text-void">
+          <span className="absolute -right-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-void bg-ember/90 text-void">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <line x1="1" y1="1" x2="23" y2="23" />
               <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
               <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
               <line x1="12" y1="19" x2="12" y2="23" />
             </svg>
+          </span>
+        )}
+
+        {/* Live ping, bottom-right of avatar — round-trip to the server */}
+        {ping != null && (
+          <span
+            title={`${ping} ms round-trip to the server`}
+            className="absolute -bottom-1 -right-1 flex items-center gap-0.5 rounded-full border border-void bg-smoke px-1 font-mono text-[9px] leading-none text-fog"
+          >
+            <span className={`h-1 w-1 rounded-full ${pingClass(ping)}`} />
+            {ping}
           </span>
         )}
       </div>
@@ -172,11 +194,14 @@ export function CallDock({
   selfName,
   selfId,
   peers,
+  pings,
   onRing,
 }: CallDockProps) {
   const dockRef = useRef<HTMLDivElement>(null)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [pttHeld, setPttHeld] = useState(false)
+  // whether the contacts popover (ring-to-join list) is open
+  const [showRing, setShowRing] = useState(false)
   // seat ids we've rung recently — disables the button through the cooldown
   // so the UI never lets you spam a ring the server would drop anyway
   const [cooling, setCooling] = useState<Set<string>>(new Set())
@@ -272,6 +297,9 @@ export function CallDock({
   const isLocalSpeaking = speakingPeers.has("local")
 
   const remoteMembers = callState.members.filter((m) => m.peerId !== selfId)
+
+  // selfId is our socket id; the ping map is keyed by seat id, so find our seat
+  const selfSeatId = callState.members.find((m) => m.peerId === selfId)?.memberId
 
   // One presenter at a time (server-enforced). Resolve who it is and which
   // stream to paint — our own local capture if it's us, else their feed.
@@ -488,6 +516,7 @@ export function CallDock({
                 isMuted={isMuted}
                 volume={localVol}
                 sharing={isSharing}
+                ping={pings[selfSeatId ?? ""]}
               />
             </div>
 
@@ -500,53 +529,56 @@ export function CallDock({
                   isMuted={m.muted}
                   volume={peerVolumes.get(m.peerId) ?? 0}
                   sharing={m.sharing}
+                  ping={pings[m.memberId]}
                 />
               </div>
             ))}
           </div>
 
-          {/* Ring others in: room members not on the line yet. One chime per
-              person per cooldown — the button locks after you ring them. */}
-          {ringable.length > 0 && (
-            <div className="mt-3 rounded-sm border hairline bg-void/30 p-2.5">
-              <div className="mb-1.5 flex items-center gap-1.5">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-fog-dim">
-                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-                </svg>
-                <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-fog-dim font-medium">
-                  Ring to join
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {ringable.map((p) => {
-                  const isCooling = cooling.has(p.id)
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => ringPeer(p.id)}
-                      disabled={isCooling}
-                      title={isCooling ? `Already ringing ${p.name}` : `Ring ${p.name} to join the call`}
-                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors duration-200 ${
-                        isCooling
-                          ? "cursor-default border-fog/15 bg-void/40 text-fog-dim"
-                          : "cursor-pointer border-signal/40 bg-signal/10 text-signal hover:bg-signal/20 hover:border-signal/70"
-                      }`}
-                    >
-                      <span className="truncate max-w-[8rem]">{p.name}</span>
-                      <span className="text-[10px]">{isCooling ? "rung ✓" : "ring ↗"}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
           </div>
 
           {/* In-Call Controls: centered round buttons, Discord-style, with a
               red hang-up as the clear primary exit. */}
-          <div className="mt-3 shrink-0 flex flex-col items-center gap-2 pt-3 border-t hairline">
+          <div className="relative mt-3 shrink-0 flex flex-col items-center gap-2 pt-3 border-t hairline">
+            {/* Contacts popover: room members not on the line yet, each ringable
+                once per cooldown. Toggled by the contacts button below. */}
+            {showRing && ringable.length > 0 && (
+              <div className="absolute bottom-full left-1/2 mb-3 w-[min(20rem,calc(100%-1rem))] -translate-x-1/2 rounded-md border hairline bg-smoke/95 p-2.5 shadow-[var(--shadow-panel)] backdrop-blur-md">
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-fog-dim">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                  <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-fog-dim font-medium">
+                    Ring to join
+                  </span>
+                </div>
+                <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+                  {ringable.map((p) => {
+                    const isCooling = cooling.has(p.id)
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => ringPeer(p.id)}
+                        disabled={isCooling}
+                        title={isCooling ? `Already ringing ${p.name}` : `Ring ${p.name} to join the call`}
+                        className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors duration-200 ${
+                          isCooling
+                            ? "cursor-default border-fog/15 bg-void/40 text-fog-dim"
+                            : "cursor-pointer border-signal/40 bg-signal/10 text-signal hover:bg-signal/20 hover:border-signal/70"
+                        }`}
+                      >
+                        <span className="truncate max-w-[8rem]">{p.name}</span>
+                        <span className="text-[10px]">{isCooling ? "rung ✓" : "ring ↗"}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-3">
               {/* Mic Mute / Unmute */}
               <button
@@ -634,6 +666,32 @@ export function CallDock({
                       <path d="M8 21h8M12 17v4" />
                     </svg>
                   )}
+                </button>
+              )}
+
+              {/* Contacts — ring room members who aren't on the call yet */}
+              {ringable.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowRing((v) => !v)}
+                  className={`relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+                    showRing
+                      ? "border-signal/50 bg-signal/15 text-signal"
+                      : "border-fog/25 bg-void/60 text-fog hover:border-signal/40 hover:text-signal"
+                  }`}
+                  title="Ring people to join"
+                  aria-label="Ring people to join the call"
+                  aria-pressed={showRing}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-void bg-signal px-1 font-mono text-[9px] font-bold text-void">
+                    {ringable.length}
+                  </span>
                 </button>
               )}
 

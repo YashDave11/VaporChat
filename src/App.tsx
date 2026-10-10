@@ -33,7 +33,7 @@ export default function App() {
     return (
       <ErrorBoundary>
         <div className="grain">
-          <Suspense fallback={<ChatSkeleton />}>
+          <Suspense fallback={<ChatSkeleton hash={hash} />}>
             <ChatApp />
           </Suspense>
         </div>

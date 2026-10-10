@@ -232,6 +232,7 @@ export function Room({ session }: { session: ChatSession }) {
           selfName={room.name}
           selfId={rtc.selfId}
           peers={session.peers}
+          pings={session.pings}
           onRing={session.ringMember}
         />
       )}

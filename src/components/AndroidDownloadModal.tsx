@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
 import { useFocusTrap } from "@/hooks/useFocusTrap"
+import { PUBLIC_APP_ORIGIN } from "@/lib/urls"
 
 const HARDCODED_APK_URL = "/vapor_app/vapor.apk"
 const APK_URL = import.meta.env.VITE_VAPOR_APK_URL || HARDCODED_APK_URL
@@ -39,11 +40,12 @@ export function AndroidDownloadModal({ isOpen, onClose }: AndroidDownloadModalPr
 
   useFocusTrap(containerRef, isOpen && mounted)
 
-  // absolute so a phone camera can resolve the link off the QR
-  const absoluteApkUrl =
-    typeof window !== "undefined" && !APK_URL.startsWith("http")
-      ? `${window.location.origin}${APK_URL}`
-      : APK_URL
+  // absolute so a phone camera can resolve the link off the QR. Pin to the
+  // canonical origin — never window.location.origin, or a Vercel preview host
+  // ends up in the QR and the scanning phone hits Vercel's SSO login wall.
+  const absoluteApkUrl = APK_URL.startsWith("http")
+    ? APK_URL
+    : `${PUBLIC_APP_ORIGIN}${APK_URL}`
 
   // QR is rendered in-browser — no third-party QR service, nothing leaves.
   // qrcode is loaded on demand so it stays out of the main bundle.

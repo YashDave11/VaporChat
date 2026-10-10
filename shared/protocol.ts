@@ -34,6 +34,8 @@ export const LIMITS = {
   TYPING_TTL_MS: 3000,
   /** a given person can be rung into a call at most once per this window */
   CALL_RING_COOLDOWN_MS: 20_000,
+  /** how often each client measures and reports its round-trip to the server */
+  PING_INTERVAL_MS: 3000,
 } as const
 
 export type RoomKind = "stranger" | "public" | "private" | "private-group"
@@ -249,6 +251,12 @@ export interface ClientToServer {
   /** ring a specific room member (by seat id) to join the active call —
       only callers already in the call may send; the server rate-limits it */
   "call:ring": (p: { to: string }) => void
+  /**
+   * Heartbeat: measure this socket's round-trip to the server. The server
+   * acks immediately so the client can time it, and `last` carries the client's
+   * previously-measured round-trip so the server can share it with the room.
+   */
+  "net:ping": (p: { last?: number }, ack: () => void) => void
 }
 
 /** server → client */
@@ -284,5 +292,7 @@ export interface ServerToClient {
   "call:signal": (p: { from: string; signal: CallSignal }) => void
   /** someone in the call is ringing you to join it — `from` names the caller */
   "call:ringing": (p: { from: string }) => void
+  /** live round-trip per room member — memberId → milliseconds */
+  "room:pings": (p: { pings: Record<string, number> }) => void
 }
 

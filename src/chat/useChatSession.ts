@@ -72,6 +72,8 @@ interface State {
   callState: CallState
   /** a caller is ringing us to join the active call — their name, or null */
   incomingRing: { from: string } | null
+  /** live round-trip per room member — memberId → ms, shown on call tiles */
+  pings: Record<string, number>
 }
 
 type Action =
@@ -98,6 +100,7 @@ type Action =
   | { type: "call_state"; callState: CallState }
   | { type: "ringing"; from: string }
   | { type: "clear_ring" }
+  | { type: "pings"; pings: Record<string, number> }
   | { type: "left" }
 
 const initial: State = {
@@ -112,6 +115,7 @@ const initial: State = {
   dissolving: null,
   callState: { active: false, members: [] },
   incomingRing: null,
+  pings: {},
 }
 
 const searchingAgain = (note: string | null): Stage => ({
@@ -224,6 +228,7 @@ function reducer(state: State, action: Action): State {
         typing: [],
         error: null,
         incomingRing: null,
+        pings: {},
       }
     case "line":
       return { ...state, lines: [...state.lines, action.line] }
@@ -291,6 +296,7 @@ function reducer(state: State, action: Action): State {
         dissolving: null,
         callState: { active: false, members: [] },
         incomingRing: null,
+        pings: {},
       }
     }
     case "error":
@@ -308,6 +314,10 @@ function reducer(state: State, action: Action): State {
       return { ...state, incomingRing: { from: action.from } }
     case "clear_ring":
       return { ...state, incomingRing: null }
+    case "pings":
+      // only meaningful inside a room; ignore late frames after we've left
+      if (state.stage.view !== "room") return state
+      return { ...state, pings: action.pings }
     case "left":
       return { ...initial, name: state.name, directory: state.directory }
     default:
@@ -426,6 +436,8 @@ export function useChatSession() {
       // the chime is owned by the modal; here we just surface the ring
       dispatch({ type: "ringing", from: p.from })
     }
+    const onPings = (p: { pings: Record<string, number> }) =>
+      dispatch({ type: "pings", pings: p.pings })
     const onError = (e: AppError) => {
       // a failed resume just means the room is gone — arrive at the gate quietly
       if (e.code === "ROOM_GONE" && resumingRef.current) {
@@ -473,6 +485,7 @@ export function useChatSession() {
     socket.on("room:ended", onEnded)
     socket.on("call:state", onCallState)
     socket.on("call:ringing", onRinging)
+    socket.on("room:pings", onPings)
     socket.on("app:error", onError)
     socket.io.on("reconnect", tryResume)
 
@@ -521,6 +534,7 @@ export function useChatSession() {
       socket.off("room:ended", onEnded)
       socket.off("call:state", onCallState)
       socket.off("call:ringing", onRinging)
+      socket.off("room:pings", onPings)
       socket.off("app:error", onError)
       socket.io.off("reconnect", tryResume)
       for (const t of timers.values()) clearTimeout(t)
@@ -538,6 +552,25 @@ export function useChatSession() {
       socket.emit("directory:unsubscribe")
     }
   }, [onGate])
+
+  // measure our round-trip to the server while a call is up — the only place
+  // ping is shown. Each tick carries the previous measurement so the server
+  // can fan it out to the other tiles; the ack times the next one.
+  const callActive = state.callState.active
+  useEffect(() => {
+    if (!callActive) return
+    const socket = getSocket()
+    let last: number | undefined
+    const tick = () => {
+      const t0 = performance.now()
+      socket.emit("net:ping", { last }, () => {
+        last = Math.round(performance.now() - t0)
+      })
+    }
+    tick()
+    const id = setInterval(tick, LIMITS.PING_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [callActive])
 
   const hello = useCallback((name: string) => {
     nameRef.current = name

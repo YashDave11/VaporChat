@@ -340,6 +340,21 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       const track = event.track
       console.log(`[VaporCall] ontrack from ${peerId}:`, track.kind)
 
+      // Bias the receive jitter buffer toward the lowest safe playout delay so
+      // voice and the shared screen arrive with minimal lag — the engine still
+      // buffers up on its own when the network is jittery. jitterBufferTarget is
+      // the modern knob; playoutDelayHint the older Chrome one.
+      try {
+        const r = event.receiver as RTCRtpReceiver & {
+          jitterBufferTarget?: number | null
+          playoutDelayHint?: number | null
+        }
+        if ("jitterBufferTarget" in r) r.jitterBufferTarget = 0
+        else if ("playoutDelayHint" in r) (r as { playoutDelayHint?: number | null }).playoutDelayHint = 0
+      } catch {
+        // unsupported browser — ignore
+      }
+
       if (track.kind === "video") {
         const screenStream = event.streams[0] || new MediaStream([track])
         setRemoteScreens((prev) => {
@@ -623,8 +638,14 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       setLocalScreenStream(stream)
       setIsSharing(true)
 
+      // Tell the encoder to favor frame rate over resolution: screen capture
+      // defaults to "detail" (sharp but low-fps, laggy for motion), and "motion"
+      // trades a little sharpness for a smoother, lower-latency feed.
+      const screenVideoTrack = stream.getVideoTracks()[0]
+      if (screenVideoTrack) screenVideoTrack.contentHint = "motion"
+
       // Browser's own "Stop sharing" bar ends the track — mirror it to our UI
-      const videoTrack = stream.getVideoTracks()[0]
+      const videoTrack = screenVideoTrack
       if (videoTrack) videoTrack.onended = () => stopShare()
 
       // Push the screen onto every existing connection; each addTrack triggers
