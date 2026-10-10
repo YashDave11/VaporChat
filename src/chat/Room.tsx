@@ -11,6 +11,7 @@ import { SharePanel } from "./SharePanel"
 import { CallDock } from "./CallDock"
 import { IncomingCallModal } from "./IncomingCallModal"
 import { useWebRTC } from "./useWebRTC"
+import { useFocusTrap } from "@/hooks/useFocusTrap"
 
 /**
  * The room shell. One column: context bar, transcript, typing line, composer.
@@ -517,6 +518,8 @@ function ConfirmVaporize({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
+
+  useFocusTrap(ref)
 
   useGSAP(
     () => {

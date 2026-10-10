@@ -81,6 +81,21 @@ export function Footer() {
           this page set no cookies and will not remember your visit
         </span>
         <span className="font-mono text-[11px] text-fog-dim">
+          <a
+            href="#/privacy"
+            className="underline-offset-4 transition-colors duration-300 hover:text-fog hover:underline"
+          >
+            privacy
+          </a>
+          {" · "}
+          <a
+            href="#/terms"
+            className="underline-offset-4 transition-colors duration-300 hover:text-fog hover:underline"
+          >
+            terms
+          </a>
+        </span>
+        <span className="font-mono text-[11px] text-fog-dim">
           © {new Date().getFullYear()}, barely
         </span>
       </div>

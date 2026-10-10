@@ -9,6 +9,7 @@ import {
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import type { PublicRoomInfo } from "@shared/protocol"
+import { useFocusTrap } from "@/hooks/useFocusTrap"
 
 /**
  * CH·02 as a destination: the full broadcast board. Not a dropdown, not a
@@ -49,6 +50,8 @@ export function RoomBrowser({
   const searchRef = useRef<HTMLInputElement>(null)
   const closingRef = useRef(false)
   const [query, setQuery] = useState("")
+
+  useFocusTrap(ref)
   // deferred: keystrokes stay instant even if the board is long
   const deferredQuery = useDeferredValue(query)
   const titleId = useId()

@@ -454,7 +454,7 @@ export function CallDock({
 
           {/* Speaking While Muted QoL Alert */}
           {speakingWhileMuted && (
-            <div className="mt-2.5 flex items-center justify-between rounded-sm border border-ember/40 bg-ember/15 px-3 py-1.5 font-mono text-[11px] text-breath shadow-[0_0_16px_rgba(255,107,107,0.25)] animate-pulse">
+            <div className="mt-2.5 flex items-center justify-between rounded-sm border border-ember/40 bg-ember/15 px-3 py-1.5 font-mono text-[11px] text-breath shadow-[0_0_16px_rgba(232,169,169,0.25)] animate-pulse">
               <div className="flex items-center gap-2">
                 <span className="text-ember font-bold">⚠️</span>
                 <span>You&rsquo;re speaking while muted</span>

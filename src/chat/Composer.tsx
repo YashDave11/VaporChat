@@ -208,7 +208,7 @@ export const Composer = memo(function Composer({
       <p className="flex justify-between pt-2 pl-12 font-mono text-[10px] text-fog-dim">
         <span>enter to send · shift+enter for a new line · nothing is stored</span>
         {remaining <= 50 && (
-          <span className={remaining <= 10 ? "text-signal" : ""}>
+          <span className={remaining <= 10 ? "text-ember" : ""}>
             {remaining}
           </span>
         )}

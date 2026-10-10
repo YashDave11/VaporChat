@@ -4,6 +4,7 @@ import { useGSAP } from "@gsap/react"
 import type { RoomJoined } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
 import { inviteUrl } from "@/lib/urls"
+import { useFocusTrap } from "@/hooks/useFocusTrap"
 
 /** the panel's words per room kind — stated once, no branching in the JSX */
 const SHARE_COPY: Record<
@@ -51,6 +52,8 @@ export function SharePanel({
   const shownUrl = url.replace(/^https?:\/\//, "")
   const canShare = typeof navigator.share === "function"
   const words = SHARE_COPY[room.kind] ?? SHARE_COPY.public
+
+  useFocusTrap(ref)
 
   useGSAP(
     (_ctx, contextSafe) => {

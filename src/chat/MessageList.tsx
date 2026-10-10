@@ -321,7 +321,7 @@ const Bubble = memo(function Bubble({
         type="button"
         onClick={reply}
         aria-label={`Reply to ${self ? "your message" : msg.from}`}
-        className="shrink-0 cursor-pointer rounded-sm p-1 font-mono text-xs text-fog-dim opacity-0 transition-opacity duration-300 outline-none group-hover:opacity-100 hover:text-signal focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-signal/40"
+        className="shrink-0 cursor-pointer rounded-sm p-2 font-mono text-xs text-fog-dim opacity-0 transition-opacity duration-300 outline-none group-hover:opacity-100 hover:text-signal focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-signal/40 [@media(hover:none)]:opacity-100"
       >
         ↩
       </button>

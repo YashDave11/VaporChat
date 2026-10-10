@@ -108,18 +108,30 @@ function Doorstep({
 
   const isMobile = useIsMobile()
   const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent)
-  const appUrl = isAndroid
-    ? `intent://join/${encodeURIComponent(info.token)}#Intent;scheme=vapor;package=chat.vapor;end`
-    : `vapor://join/${encodeURIComponent(info.token)}`
+  const apkUrl = import.meta.env.VITE_VAPOR_APK_URL || "/vapor_app/vapor.apk"
+  const [showInstall, setShowInstall] = useState(false)
 
+  // On Android, hand the invite straight to the app. If it's installed the
+  // vapor:// intent opens it; if not, Chrome follows browser_fallback_url back
+  // to this page tagged ?app=missing, and we show the install popup instead of
+  // a dead Play Store bounce. (Vapor isn't on the Play Store, so no package=.)
   useEffect(() => {
-    if (isAndroid && isMobile) {
-      const timer = setTimeout(() => {
-        window.location.href = appUrl
-      }, 400)
-      return () => clearTimeout(timer)
+    if (!(isAndroid && isMobile)) return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("app") === "missing") {
+      setShowInstall(true)
+      return
     }
-  }, [info.token, isAndroid, isMobile, appUrl])
+    const fallback = new URL(window.location.href)
+    fallback.searchParams.set("app", "missing")
+    const intentUrl =
+      `intent://join/${encodeURIComponent(info.token)}#Intent;scheme=vapor;` +
+      `S.browser_fallback_url=${encodeURIComponent(fallback.toString())};end`
+    const timer = setTimeout(() => {
+      window.location.href = intentUrl
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [info.token, isAndroid, isMobile])
 
   useGSAP(
     () => {
@@ -181,17 +193,6 @@ function Doorstep({
           <> · {info.count}/{info.capacity} seats</>
         )}
       </p>
-
-      {isMobile && (
-        <div data-door-line className="mt-6 block md:hidden">
-          <a
-            href={appUrl}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-sm border border-signal/40 bg-signal/10 px-4 py-3 font-mono text-xs font-medium uppercase tracking-widest text-signal shadow-sm transition-colors hover:bg-signal/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40"
-          >
-            📱 Open in App
-          </a>
-        </div>
-      )}
 
       <form
         data-door-line
@@ -257,6 +258,48 @@ function Doorstep({
           not now
         </button>
       </div>
+
+      {showInstall && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Get the Vapor app"
+          className="fixed inset-0 z-40 flex items-center justify-center px-6"
+        >
+          <div
+            className="absolute inset-0 bg-void/80 backdrop-blur-sm"
+            onClick={() => setShowInstall(false)}
+          />
+          <div className="relative w-full max-w-sm rounded-sm border border-signal/25 bg-smoke/95 p-6 text-center shadow-[var(--shadow-panel)]">
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-signal">
+              Vapor for Android
+            </p>
+            <h2 className="mt-2 font-display text-xl font-semibold tracking-tight text-breath">
+              Open this in the app
+            </h2>
+            <p className="mt-2 text-sm leading-snug text-fog">
+              Calls, screen share, and invite links feel best in the Vapor app.
+              Install it once — or keep going here on the web.
+            </p>
+            <div className="mt-6 flex flex-col gap-3">
+              <a
+                href={apkUrl}
+                download="vapor.apk"
+                className="rounded-sm bg-signal px-4 py-3 font-mono text-[12px] font-medium uppercase tracking-widest text-void transition-colors hover:bg-breath focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/40"
+              >
+                Install the app
+              </a>
+              <button
+                type="button"
+                onClick={() => setShowInstall(false)}
+                className="cursor-pointer font-mono text-[11px] text-fog-dim underline decoration-fog/30 underline-offset-4 transition-colors hover:text-fog"
+              >
+                Continue on web
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

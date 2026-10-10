@@ -6,6 +6,8 @@ import { Privacy } from "@/components/Privacy"
 import { HowItWorks } from "@/components/HowItWorks"
 import { Preview } from "@/components/Preview"
 import { FinalCta, Footer } from "@/components/FinalCta"
+import { LegalPage } from "@/components/LegalPage"
+import { PRIVACY, TERMS } from "@/content/legal"
 import { VantaBackground } from "@/components/VantaBackground"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 
@@ -33,6 +35,29 @@ export default function App() {
           <Suspense fallback={null}>
             <ChatApp />
           </Suspense>
+        </div>
+      </ErrorBoundary>
+    )
+  }
+
+  const legalDoc = hash.startsWith("#/privacy")
+    ? PRIVACY
+    : hash.startsWith("#/terms")
+      ? TERMS
+      : null
+
+  if (legalDoc) {
+    return (
+      <ErrorBoundary>
+        <div className="grain">
+          <VantaBackground />
+          <Nav />
+          <main className="relative z-10">
+            <LegalPage doc={legalDoc} />
+          </main>
+          <div className="relative z-10">
+            <Footer />
+          </div>
         </div>
       </ErrorBoundary>
     )

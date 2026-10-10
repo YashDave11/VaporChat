@@ -8,7 +8,7 @@
   --color-smoke-2: #16181d;
   --color-breath: #e9ebee;
   --color-fog: #878e9a;
-  --color-fog-dim: #565c66;
+  --color-fog-dim: #7b828d; /* AA on void (#08090b) ≈ 5.1:1 */
   --color-signal: #a9e8dc;
   /* destructive accent: a coal about to go out — red, but never a fire alarm */
   --color-ember: #e8a9a9;
@@ -19,6 +19,9 @@
   --font-mono: "Spline Sans Mono", ui-monospace, monospace;
 
   --ease-fog: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* wide-phone breakpoint: header labels appear once there's room */
+  --breakpoint-xs: 25rem;
 }
 
 /* ---- the night sky (default): atmosphere, depth, and grain ----
@@ -65,7 +68,7 @@
   --color-smoke-2: #fbfcfd;
   --color-breath: #1d242b;
   --color-fog: #5b6673;
-  --color-fog-dim: #7f8a96;
+  --color-fog-dim: #5c6572; /* AA on light void (#e8edf0) ≈ 5.0:1 */
   --color-signal: #12776a;
   --color-ember: #b0524c;
   --color-ember-dim: #dcaba6;

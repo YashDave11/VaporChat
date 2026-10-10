@@ -34,3 +34,6 @@ android/
 # AI tooling scratch/context output — not part of the app
 brag-output/
 context/
+
+# Local JDK 17 for CLI android builds
+.buildtools/

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
+import { useFocusTrap } from "@/hooks/useFocusTrap"
 
 const HARDCODED_APK_URL = "/vapor_app/vapor.apk"
 const APK_URL = import.meta.env.VITE_VAPOR_APK_URL || HARDCODED_APK_URL
@@ -13,86 +14,61 @@ interface AndroidDownloadModalProps {
 export function AndroidDownloadModal({ isOpen, onClose }: AndroidDownloadModalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [mounted, setMounted] = useState(false)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
+  // lock scroll + Escape while open; Tab-trapping is useFocusTrap below
   useEffect(() => {
     if (!isOpen || !mounted) return
 
-    const previousActiveElement = typeof document !== "undefined" ? (document.activeElement as HTMLElement) : null
-
-    const focusableSelector =
-      'button, [href], input, select, textarea, [tabindex]:not([-1])'
-    
-    const focusTimer = requestAnimationFrame(() => {
-      const focusableElements = containerRef.current?.querySelectorAll(focusableSelector)
-      if (focusableElements && focusableElements.length > 0) {
-        (focusableElements[0] as HTMLElement).focus()
-      }
-    })
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose()
-      }
-
-      if (e.key === "Tab") {
-        if (!containerRef.current) return
-        const focusable = Array.from(
-          containerRef.current.querySelectorAll(focusableSelector)
-        ) as HTMLElement[]
-        
-        if (focusable.length === 0) {
-          e.preventDefault()
-          return
-        }
-
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            last.focus()
-            e.preventDefault()
-          }
-        } else {
-          if (document.activeElement === last) {
-            first.focus()
-            e.preventDefault()
-          }
-        }
-      }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
     }
 
-    if (typeof document !== "undefined") {
-      document.body.style.overflow = "hidden"
-      window.addEventListener("keydown", handleKeyDown)
-    }
+    document.body.style.overflow = "hidden"
+    window.addEventListener("keydown", onKeyDown)
 
     return () => {
-      cancelAnimationFrame(focusTimer)
-      if (typeof document !== "undefined") {
-        document.body.style.overflow = ""
-        window.removeEventListener("keydown", handleKeyDown)
-        if (previousActiveElement && typeof previousActiveElement.focus === "function") {
-          previousActiveElement.focus()
-        }
-      }
+      document.body.style.overflow = ""
+      window.removeEventListener("keydown", onKeyDown)
     }
   }, [isOpen, mounted, onClose])
 
-  if (!isOpen || !mounted || typeof document === "undefined" || !document.body) return null
+  useFocusTrap(containerRef, isOpen && mounted)
 
-  // Ensure absolute URL for mobile QR code scanning
-  const absoluteApkUrl = typeof window !== "undefined" && !APK_URL.startsWith("http")
-    ? `${window.location.origin}${APK_URL}`
-    : APK_URL
+  // absolute so a phone camera can resolve the link off the QR
+  const absoluteApkUrl =
+    typeof window !== "undefined" && !APK_URL.startsWith("http")
+      ? `${window.location.origin}${APK_URL}`
+      : APK_URL
 
-  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-    absoluteApkUrl
-  )}&color=08090b&bcolor=ffffff`
+  // QR is rendered in-browser — no third-party QR service, nothing leaves.
+  // qrcode is loaded on demand so it stays out of the main bundle.
+  useEffect(() => {
+    if (!isOpen || !mounted) return
+    let alive = true
+    import("qrcode")
+      .then(({ default: QRCode }) =>
+        QRCode.toDataURL(absoluteApkUrl, {
+          width: 180,
+          margin: 1,
+          color: { dark: "#08090b", light: "#ffffff" },
+        })
+      )
+      .then((url) => alive && setQrDataUrl(url))
+      .catch(() => {
+        /* QR is a convenience; the download button still works */
+      })
+    return () => {
+      alive = false
+    }
+  }, [isOpen, mounted, absoluteApkUrl])
+
+  if (!isOpen || !mounted || typeof document === "undefined" || !document.body)
+    return null
 
   return createPortal(
     <div
@@ -151,12 +127,17 @@ export function AndroidDownloadModal({ isOpen, onClose }: AndroidDownloadModalPr
         <div className="w-full md:w-[280px] bg-smoke-2 border-t border-fog/15 md:border-t-0 md:border-l border-fog/15 p-6 md:p-8 flex flex-col items-center justify-center gap-6">
           <div className="flex flex-col items-center gap-2">
             <div className="rounded-sm border border-signal/20 bg-white p-3 shadow-lg hover:border-signal/50 transition-colors duration-300">
-              <img
-                src={qrImageUrl}
-                alt="Vapor Android APK Download QR Code"
-                className="h-40 w-40 block"
-                loading="eager"
-              />
+              {qrDataUrl ? (
+                <img
+                  src={qrDataUrl}
+                  alt="Vapor Android APK Download QR Code"
+                  className="h-40 w-40 block"
+                />
+              ) : (
+                <div className="flex h-40 w-40 items-center justify-center font-mono text-[10px] text-black/40">
+                  generating…
+                </div>
+              )}
             </div>
             <span className="font-mono text-[10px] text-fog-dim tracking-wide text-center">
               Scan to download on mobile

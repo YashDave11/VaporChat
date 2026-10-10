@@ -3,6 +3,7 @@ import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import { Button } from "@/components/ui/button"
 import { playCue } from "@/lib/sound"
+import { useFocusTrap } from "@/hooks/useFocusTrap"
 
 interface IncomingCallModalProps {
   callerName: string
@@ -21,6 +22,8 @@ export function IncomingCallModal({
 }: IncomingCallModalProps) {
   const ref = useRef<HTMLDivElement>(null)
   const acceptBtnRef = useRef<HTMLButtonElement>(null)
+
+  useFocusTrap(ref)
 
   // GSAP entrance animation matching Vapor modal grammar
   useGSAP(
