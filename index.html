@@ -29,16 +29,19 @@
         if (m) m.setAttribute("content", t === "light" ? "#e8edf0" : "#08090b")
       })()
     </script>
-    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600&f[]=general-sans@400,500&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      href="/fonts/general-sans-400.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
     />
     <link
-      href="https://fonts.googleapis.com/css2?family=Spline+Sans+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      href="/fonts/clash-display-600.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
     />
     <title>Vapor — Talk. Then it's gone.</title>
   </head>

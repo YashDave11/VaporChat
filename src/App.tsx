@@ -9,6 +9,7 @@ import { FinalCta, Footer } from "@/components/FinalCta"
 import { LegalPage } from "@/components/LegalPage"
 import { PRIVACY, TERMS } from "@/content/legal"
 import { VantaBackground } from "@/components/VantaBackground"
+import { ChatSkeleton } from "@/components/Skeleton"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 // the chat app (and socket.io-client with it) loads only when entered
@@ -32,7 +33,7 @@ export default function App() {
     return (
       <ErrorBoundary>
         <div className="grain">
-          <Suspense fallback={null}>
+          <Suspense fallback={<ChatSkeleton />}>
             <ChatApp />
           </Suspense>
         </div>

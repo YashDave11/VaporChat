@@ -27,7 +27,10 @@ export function VantaBackground() {
     let effect: { destroy(): void } | null = null
     let cancelled = false
 
-    Promise.all([
+    // defer the 607 kB three.js fetch until the browser is idle, so it never
+    // competes with the landing page's first paint — the void bg shows meanwhile
+    const load = () =>
+      Promise.all([
       import("three"),
       import("vanta/dist/vanta.net.min"),
     ]).then(([THREE, vantaModule]) => {
@@ -73,8 +76,15 @@ export function VantaBackground() {
       })
     })
 
+    const hasIdle = typeof window.requestIdleCallback === "function"
+    const idle = hasIdle
+      ? window.requestIdleCallback(load, { timeout: 2000 })
+      : window.setTimeout(load, 200)
+
     return () => {
       cancelled = true
+      if (hasIdle) window.cancelIdleCallback(idle as number)
+      else window.clearTimeout(idle as number)
       effect?.destroy()
     }
   }, [theme])

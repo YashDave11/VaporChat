@@ -1,6 +1,43 @@
-@import url("https://api.fontshare.com/v2/css?f[]=clash-display@500,600&f[]=general-sans@400,500&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Spline+Sans+Mono:wght@400;500&display=swap");
 @import "tailwindcss";
+
+/* Self-hosted fonts (woff2 in /public/fonts) — no third-party CDN on first
+   paint. font-display: swap so text shows in the system fallback immediately
+   then swaps in. Spline Sans Mono latin is a variable file covering 400–500. */
+@font-face {
+  font-family: "Clash Display";
+  src: url("/fonts/clash-display-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Clash Display";
+  src: url("/fonts/clash-display-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "General Sans";
+  src: url("/fonts/general-sans-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "General Sans";
+  src: url("/fonts/general-sans-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Spline Sans Mono";
+  src: url("/fonts/spline-sans-mono-latin.woff2") format("woff2");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+}
 
 @theme {
   --color-void: #08090b;
