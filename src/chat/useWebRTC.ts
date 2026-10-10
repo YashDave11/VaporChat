@@ -101,6 +101,9 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
   const localStreamRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
+  /** the socket id we joined the call under — a change means we reconnected,
+      and the server dropped our old seat from the call on disconnect */
+  const callSocketIdRef = useRef<string>("")
   const analyserTrackRef = useRef<MediaStreamTrack | null>(null)
   const peersRef = useRef<Map<string, PeerConnectionBundle>>(new Map())
   const inCallRef = useRef(false)
@@ -272,15 +275,13 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
     // Perfect-negotiation: any track change (mic at join, screen later) fires
     // this. We let setLocalDescription() implicitly make the right offer; glare
-    // is resolved on the inbound side via the polite/impolite rule.
+    // is resolved on the inbound side via the polite/impolite rule. We do NOT
+    // bail on a non-stable state here: the browser only fires this when stable,
+    // and makingOffer + the inbound polite/impolite check already resolve glare.
+    // Bailing would consume the negotiation-needed flag and strand the change
+    // forever — which is exactly how a screen-share offer went missing.
     pc.onnegotiationneeded = async () => {
       if (!inCallRef.current) return
-      // Only offer from a settled connection. This skips the race where a
-      // freshly-created polite peer would fire an offer while it's about to
-      // answer the initiator's incoming one. ponytail: deliberate — screen
-      // share is a user action on an already-stable call, so nothing to add
-      // mid-negotiation gets stranded in practice.
-      if (pc.signalingState !== "stable") return
       try {
         bundle.makingOffer = true
         await pc.setLocalDescription()
@@ -423,6 +424,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   // Leave call and clean up
   const leaveCall = useCallback(() => {
     inCallRef.current = false
+    callSocketIdRef.current = ""
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current)
       animFrameRef.current = null
@@ -522,6 +524,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
 
       playCue("call_join")
+      callSocketIdRef.current = getSocket().id ?? ""
       getSocket().emit("call:join")
       startVolumeDetection()
     } catch (err) {
@@ -730,6 +733,38 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     if (!myId) return
 
     const memberIds = new Set(callState.members.map((m) => m.peerId))
+
+    // Reconnect recovery. A socket blip (common on mobile/wifi) gives us a new
+    // socket id, and the server drops our old seat from the call the moment it
+    // sees the disconnect. session:resume reclaims our ROOM seat but never the
+    // CALL — so without this we come back visible in the room yet silently
+    // absent from the call: our voice reaches no one and we hear no one, while
+    // our dead peer connections (keyed by the old id) linger. When our current
+    // id differs from the one we joined under AND the call no longer lists us,
+    // tear the stale mesh down and rejoin so audio (and any share) rebuilds on
+    // every side under the new id.
+    if (
+      callSocketIdRef.current &&
+      myId !== callSocketIdRef.current &&
+      !memberIds.has(myId)
+    ) {
+      callSocketIdRef.current = myId
+      peersRef.current.forEach((bundle) => {
+        bundle.audioElement.pause()
+        bundle.audioElement.srcObject = null
+        bundle.audioElement.parentNode?.removeChild(bundle.audioElement)
+        bundle.pc.close()
+      })
+      peersRef.current.clear()
+      remoteAnalysersRef.current.clear()
+      setRemoteStreams(new Map())
+      setRemoteScreens(new Map())
+      socket.emit("call:join")
+      // call:join resets our server-side mute/share, so restate them
+      if (isMutedRef.current) socket.emit("call:state_update", { muted: true })
+      if (screenStreamRef.current) socket.emit("call:state_update", { sharing: true })
+      return
+    }
 
     // Create a connection to any new member we're the initiator for (lower id).
     // Adding our mic track fires onnegotiationneeded, which sends the offer —
