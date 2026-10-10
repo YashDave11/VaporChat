@@ -77,7 +77,7 @@ function ScreenStage({
         autoPlay
         playsInline
         muted
-        className="max-h-[52vh] w-full bg-black object-contain"
+        className="max-h-[38vh] w-full bg-black object-contain"
       />
       <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-void/70 px-2 py-0.5 font-mono text-[10px] text-breath backdrop-blur">
         <span className="h-1.5 w-1.5 rounded-full bg-signal" />
@@ -400,10 +400,10 @@ export function CallDock({
         <div
           ref={dockRef}
           data-call-dock
-          className="relative mb-3 overflow-hidden rounded-md border hairline bg-smoke/90 p-3 shadow-[var(--shadow-panel)] backdrop-blur-md"
+          className="relative mb-3 flex max-h-[64vh] flex-col overflow-hidden rounded-md border hairline bg-smoke/90 p-3 shadow-[var(--shadow-panel)] backdrop-blur-md"
         >
           {/* Top bar: title · timer · zero-storage badge · Collapse · Leave Call */}
-          <div className="flex items-center justify-between pb-2.5 border-b hairline">
+          <div className="flex shrink-0 items-center justify-between pb-2.5 border-b hairline">
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-70" />
@@ -434,6 +434,10 @@ export function CallDock({
             </div>
           </div>
 
+          {/* Scrollable body: screen + tiles + ring. Flex-1 so the top bar and
+              controls stay pinned and visible even when a shared screen makes
+              the dock taller than the viewport. */}
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           {/* Error alert if device access failed */}
           {error && (
             <div className="mt-2 flex items-center justify-between rounded bg-ember/10 border border-ember/20 px-2.5 py-1.5 font-mono text-[11px] text-ember">
@@ -538,10 +542,11 @@ export function CallDock({
               </div>
             </div>
           )}
+          </div>
 
           {/* In-Call Controls: centered round buttons, Discord-style, with a
               red hang-up as the clear primary exit. */}
-          <div className="mt-3 flex flex-col items-center gap-2 pt-3 border-t hairline">
+          <div className="mt-3 shrink-0 flex flex-col items-center gap-2 pt-3 border-t hairline">
             <div className="flex items-center gap-3">
               {/* Mic Mute / Unmute */}
               <button
