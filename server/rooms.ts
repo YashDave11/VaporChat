@@ -31,6 +31,10 @@ export interface Member {
   resumeToken: string
   /** last self-measured round-trip to the server, ms — undefined until reported */
   ping?: number
+  /** epoch-ms of this member's last ping fan-out — throttles the broadcast */
+  lastPingBroadcast?: number
+  /** epoch-ms of this member's last relayed typing signal — throttles the relay */
+  lastTyping?: number
 }
 
 export interface Room {

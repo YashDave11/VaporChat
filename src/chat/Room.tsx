@@ -27,7 +27,10 @@ export function Room({ session }: { session: ChatSession }) {
   const ref = useRef<HTMLDivElement>(null)
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [dismissedCallKey, setDismissedCallKey] = useState<string | null>(null)
+  // dismissed for the *duration of the current call*, not a specific member set —
+  // keying it to the exact peers meant any join/leave re-popped and re-chimed the
+  // alert. Reset when the call fully ends (effect below).
+  const [callDismissed, setCallDismissed] = useState(false)
 
   const rtc = useWebRTC(session.callState, session.stage.view === "room")
 
@@ -120,12 +123,11 @@ export function Room({ session }: { session: ChatSession }) {
   const otherCallMembers = session.callState.members.filter(
     (m) => m.peerId !== rtc.selfId
   )
-  const activeCallKey = otherCallMembers.map((m) => m.peerId).sort().join(",")
 
-  // Automatically reset declined state when the previous call finishes completely
+  // Automatically reset dismissal when the call finishes completely
   useEffect(() => {
     if (!session.callState.active || otherCallMembers.length === 0) {
-      setDismissedCallKey(null)
+      setCallDismissed(false)
     }
   }, [session.callState.active, otherCallMembers.length])
 
@@ -133,13 +135,12 @@ export function Room({ session }: { session: ChatSession }) {
   const prevInCallRef = useRef(rtc.inCall)
   useEffect(() => {
     if (prevInCallRef.current && !rtc.inCall) {
-      // User just left the call — dismiss active call key so they are NOT auto-rung by the remaining callers!
-      if (activeCallKey) {
-        setDismissedCallKey(activeCallKey)
-      }
+      // User just left the call — stay dismissed so the remaining callers don't
+      // auto-re-ring us for the rest of this call.
+      if (otherCallMembers.length > 0) setCallDismissed(true)
     }
     prevInCallRef.current = rtc.inCall
-  }, [rtc.inCall, activeCallKey])
+  }, [rtc.inCall, otherCallMembers.length])
 
   // Display incoming call alert when another member is in call and we haven't joined or dismissed
   const showIncomingCall =
@@ -147,7 +148,7 @@ export function Room({ session }: { session: ChatSession }) {
     !rtc.inCall &&
     !rtc.isStarting &&
     otherCallMembers.length > 0 &&
-    dismissedCallKey !== activeCallKey
+    !callDismissed
 
   // An explicit ring overrides a prior dismissal — someone deliberately
   // summoned us, so the modal reappears even if we'd waved off the auto-alert.
@@ -163,23 +164,21 @@ export function Room({ session }: { session: ChatSession }) {
   }, [rtc.inCall, ring, clearRing])
 
   const onAcceptIncomingCall = useCallback(() => {
-    setDismissedCallKey(null)
+    setCallDismissed(false)
     clearRing()
     void rtc.startCall()
   }, [rtc, clearRing])
 
   const onDeclineIncomingCall = useCallback(() => {
-    setDismissedCallKey(activeCallKey)
+    setCallDismissed(true)
     clearRing()
-  }, [activeCallKey, clearRing])
+  }, [clearRing])
 
   // Wrap leaveCall to immediately register call dismissal and prevent any auto-ring loop
   const onLeaveCall = useCallback(() => {
-    if (activeCallKey) {
-      setDismissedCallKey(activeCallKey)
-    }
+    setCallDismissed(true)
     rtc.leaveCall()
-  }, [rtc, activeCallKey])
+  }, [rtc])
 
   const rtcWithDismiss = {
     ...rtc,
