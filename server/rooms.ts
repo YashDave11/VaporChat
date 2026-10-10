@@ -276,11 +276,12 @@ export function leaveCall(room: Room, peerId: string): boolean {
 export function updateCallMember(
   room: Room,
   peerId: string,
-  updates: { muted: boolean }
+  updates: { muted?: boolean; sharing?: boolean }
 ): boolean {
   const m = room.callMembers.get(peerId)
   if (!m) return false
-  m.muted = updates.muted
+  if (updates.muted !== undefined) m.muted = updates.muted
+  if (updates.sharing !== undefined) m.sharing = updates.sharing
   return true
 }
 

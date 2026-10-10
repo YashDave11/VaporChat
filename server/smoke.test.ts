@@ -559,6 +559,23 @@ async function main() {
   const caMember = cs3.members.find((m: any) => m.name === "ca")
   ok(caMember?.muted === true, "mute state update reflected in call state")
 
+  // ca claims the screen — the sharing flag rides call state to everyone
+  const cbSeesShareOn = once<any>(cb, "call:state")
+  ca.emit("call:state_update", { sharing: true })
+  const csShare = await cbSeesShareOn
+  ok(
+    csShare.members.find((m: any) => m.name === "ca")?.sharing === true,
+    "sharing flag propagates in call state"
+  )
+
+  // one presenter at a time: cb's claim is refused while ca is sharing, so
+  // the server emits nothing (silence proves the claim was dropped)
+  const cbShareDenied = silence(cb, "call:state", 800)
+  cb.emit("call:state_update", { sharing: true })
+  ok(await cbShareDenied, "second presenter denied while one is already sharing")
+
+  // ca keeps sharing — leaving the call must auto-clear the flag below
+
   // cb relays signal to ca
   const caReceivesSignal = once<any>(ca, "call:signal")
   cb.emit("call:signal", { to: caMember.peerId, signal: { type: "offer", sdp: { type: "offer", sdp: "v=0" } } })
@@ -570,6 +587,29 @@ async function main() {
   ca.emit("call:leave")
   const cs4 = await cbSeesCallState4
   ok(cs4.members.length === 1 && cs4.members[0].name === "cb", "call state updates when member leaves call")
+  ok(
+    !cs4.members.some((m: any) => m.sharing),
+    "presenter leaving the call clears the sharing flag"
+  )
+
+  // call rings: cb (in call) rings ca (in room, not in call) → ca is chimed.
+  // caMemberSeat is ca's stable seat id, which the call state carries so the
+  // client can tell who in the room is not yet on the line.
+  const caSeat = cr.selfId // ca created the room, so cr is ca's room:joined
+  const caRung = once<any>(ca, "call:ringing")
+  cb.emit("call:ring", { to: caSeat })
+  const rung = await caRung
+  ok(rung.from === "cb", "in-call member can ring a room member to join")
+
+  // a second ring at the same target is swallowed by the per-target cooldown
+  const caQuiet = silence(ca, "call:ringing", 800)
+  cb.emit("call:ring", { to: caSeat })
+  ok(await caQuiet, "repeat ring is rate-limited (no call spam)")
+
+  // ca is NOT in the call, so ca ringing cb must be refused outright
+  const cbQuiet = silence(cb, "call:ringing", 800)
+  ca.emit("call:ring", { to: cs4.members[0].memberId })
+  ok(await cbQuiet, "a member outside the call cannot ring anyone")
 
   ca.disconnect()
   cb.disconnect()

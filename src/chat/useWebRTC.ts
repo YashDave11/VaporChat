@@ -47,6 +47,10 @@ interface PeerConnectionBundle {
   remoteStream: MediaStream
   pendingCandidates: RTCIceCandidateInit[]
   makingOffer: boolean
+  /** perfect-negotiation glare flag: set when we drop an incoming offer */
+  ignoreOffer: boolean
+  /** senders carrying our screen-share tracks, so stopShare can remove them */
+  screenSenders: RTCRtpSender[]
 }
 
 export interface WebRTCController {
@@ -58,6 +62,14 @@ export interface WebRTCController {
   speakingWhileMuted: boolean
   pttEnabled: boolean
   remoteStreams: Map<string, MediaStream>
+  /** live screen-share video streams, keyed by presenter peerId */
+  remoteScreens: Map<string, MediaStream>
+  /** your own screen-share stream while presenting (local preview), else null */
+  localScreenStream: MediaStream | null
+  /** true while you are the presenter */
+  isSharing: boolean
+  /** whether this browser can capture a screen at all (desktop only) */
+  shareSupported: boolean
   speakingPeers: Set<string>
   peerVolumes: Map<string, number>
   callDuration: number
@@ -67,6 +79,8 @@ export interface WebRTCController {
   toggleMute: () => void
   togglePtt: () => void
   setPttPressed: (pressed: boolean) => void
+  startShare: () => Promise<void>
+  stopShare: () => void
   clearError: () => void
 }
 
@@ -77,12 +91,16 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
   const [speakingWhileMuted, setSpeakingWhileMuted] = useState(false)
   const [pttEnabled, setPttEnabled] = useState(false)
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
+  const [remoteScreens, setRemoteScreens] = useState<Map<string, MediaStream>>(new Map())
+  const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null)
+  const [isSharing, setIsSharing] = useState(false)
   const [speakingPeers, setSpeakingPeers] = useState<Set<string>>(new Set())
   const [peerVolumes, setPeerVolumes] = useState<Map<string, number>>(new Map())
   const [callDuration, setCallDuration] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const localStreamRef = useRef<MediaStream | null>(null)
+  const screenStreamRef = useRef<MediaStream | null>(null)
   const analyserTrackRef = useRef<MediaStreamTrack | null>(null)
   const peersRef = useRef<Map<string, PeerConnectionBundle>>(new Map())
   const inCallRef = useRef(false)
@@ -248,6 +266,37 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       remoteStream,
       pendingCandidates: [],
       makingOffer: false,
+      ignoreOffer: false,
+      screenSenders: [],
+    }
+
+    // Perfect-negotiation: any track change (mic at join, screen later) fires
+    // this. We let setLocalDescription() implicitly make the right offer; glare
+    // is resolved on the inbound side via the polite/impolite rule.
+    pc.onnegotiationneeded = async () => {
+      if (!inCallRef.current) return
+      // Only offer from a settled connection. This skips the race where a
+      // freshly-created polite peer would fire an offer while it's about to
+      // answer the initiator's incoming one. ponytail: deliberate — screen
+      // share is a user action on an already-stable call, so nothing to add
+      // mid-negotiation gets stranded in practice.
+      if (pc.signalingState !== "stable") return
+      try {
+        bundle.makingOffer = true
+        await pc.setLocalDescription()
+        if (!pc.localDescription) return
+        getSocket().emit("call:signal", {
+          to: peerId,
+          signal: {
+            type: pc.localDescription.type as "offer" | "answer",
+            sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp },
+          },
+        })
+      } catch (err) {
+        console.error("[VaporCall] negotiationneeded error:", err)
+      } finally {
+        bundle.makingOffer = false
+      }
     }
 
     // Attach local audio track if ready, or register transceiver
@@ -256,6 +305,14 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       pc.addTrack(audioTrack, localStreamRef.current!)
     } else {
       pc.addTransceiver("audio", { direction: "sendrecv" })
+    }
+
+    // If we're already presenting when this peer connects, send them the
+    // screen too so a late joiner isn't staring at nothing.
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((t) => {
+        bundle.screenSenders.push(pc.addTrack(t, screenStreamRef.current!))
+      })
     }
 
     // Handle ICE candidates
@@ -276,12 +333,35 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
     }
 
-    // Handle incoming remote media tracks directly on the audio element
+    // Handle incoming remote media tracks: video is a screen share, audio is
+    // voice (or a shared tab's audio, which just rides the same element).
     pc.ontrack = (event) => {
-      console.log(`[VaporCall] ontrack from ${peerId}:`, event.track.kind)
-      const incomingStream = event.streams[0] || new MediaStream([event.track])
-      bundle.remoteStream = incomingStream
-      bundle.audioElement.srcObject = incomingStream
+      const track = event.track
+      console.log(`[VaporCall] ontrack from ${peerId}:`, track.kind)
+
+      if (track.kind === "video") {
+        const screenStream = event.streams[0] || new MediaStream([track])
+        setRemoteScreens((prev) => {
+          const next = new Map(prev)
+          next.set(peerId, screenStream)
+          return next
+        })
+        track.onended = () => {
+          setRemoteScreens((prev) => {
+            const next = new Map(prev)
+            next.delete(peerId)
+            return next
+          })
+        }
+        return
+      }
+
+      // Audio: add every inbound audio track to one stable per-peer stream so
+      // a presenter's tab audio can't knock the mic off the element.
+      bundle.remoteStream.addTrack(track)
+      if (bundle.audioElement.srcObject !== bundle.remoteStream) {
+        bundle.audioElement.srcObject = bundle.remoteStream
+      }
 
       const playAudio = () => {
         bundle.audioElement.play().catch((err) => {
@@ -290,14 +370,16 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       }
 
       playAudio()
-      event.track.onunmute = () => {
+      track.onunmute = () => {
         console.log(`[VaporCall] Track unmuted from ${peerId}`)
         playAudio()
       }
 
-      // Clone track for Web Audio analyser so Chrome doesn't intercept or mute primary playback!
+      // Clone the first (mic) track for the Web Audio analyser so Chrome
+      // doesn't intercept or mute primary playback. attachRemoteAnalyser
+      // no-ops if we've already wired this peer, so tab audio won't double it.
       try {
-        const clone = event.track.clone()
+        const clone = track.clone()
         attachRemoteAnalyser(peerId, new MediaStream([clone]))
       } catch (err) {
         console.warn("[VaporCall] Error attaching remote analyser:", err)
@@ -305,7 +387,7 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
       setRemoteStreams((prev) => {
         const updated = new Map(prev)
-        updated.set(peerId, incomingStream)
+        updated.set(peerId, bundle.remoteStream)
         return updated
       })
     }
@@ -370,12 +452,19 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
       localStreamRef.current.getTracks().forEach((track) => track.stop())
       localStreamRef.current = null
     }
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => track.stop())
+      screenStreamRef.current = null
+    }
     if (analyserTrackRef.current) {
       analyserTrackRef.current.stop()
       analyserTrackRef.current = null
     }
 
     setRemoteStreams(new Map())
+    setRemoteScreens(new Map())
+    setLocalScreenStream(null)
+    setIsSharing(false)
     setSpeakingPeers(new Set())
     setPeerVolumes(new Map())
     setInCall(false)
@@ -496,6 +585,65 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
   const clearError = useCallback(() => setError(null), [])
 
+  // ---- screen share ----
+
+  const stopShare = useCallback(() => {
+    peersRef.current.forEach((bundle) => {
+      bundle.screenSenders.forEach((sender) => {
+        try {
+          bundle.pc.removeTrack(sender) // fires onnegotiationneeded → renegotiate
+        } catch {
+          // sender already gone (peer closed) — ignore
+        }
+      })
+      bundle.screenSenders = []
+    })
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((t) => t.stop())
+      screenStreamRef.current = null
+    }
+    setLocalScreenStream(null)
+    setIsSharing(false)
+    getSocket().emit("call:state_update", { sharing: false })
+  }, [])
+
+  const startShare = useCallback(async () => {
+    if (!inCallRef.current) return
+    const md = navigator.mediaDevices
+    if (!md?.getDisplayMedia) {
+      setError("Screen sharing isn't supported on this browser.")
+      return
+    }
+    try {
+      const stream = await md.getDisplayMedia({ video: true, audio: true })
+      screenStreamRef.current = stream
+      setLocalScreenStream(stream)
+      setIsSharing(true)
+
+      // Browser's own "Stop sharing" bar ends the track — mirror it to our UI
+      const videoTrack = stream.getVideoTracks()[0]
+      if (videoTrack) videoTrack.onended = () => stopShare()
+
+      // Push the screen onto every existing connection; each addTrack triggers
+      // onnegotiationneeded, so the renegotiation offers go out on their own.
+      peersRef.current.forEach((bundle) => {
+        stream.getTracks().forEach((t) => {
+          bundle.screenSenders.push(bundle.pc.addTrack(t, stream))
+        })
+      })
+
+      getSocket().emit("call:state_update", { sharing: true })
+    } catch (err) {
+      // Cancelling the OS picker throws NotAllowedError — that's not a failure
+      screenStreamRef.current = null
+      setLocalScreenStream(null)
+      setIsSharing(false)
+      if ((err as Error)?.name !== "NotAllowedError") {
+        setError("Couldn't start screen sharing.")
+      }
+    }
+  }, [stopShare])
+
   // Handle incoming signals from the server
   useEffect(() => {
     const socket = getSocket()
@@ -508,12 +656,25 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
         bundle = createPeerConnection(from)
       }
       const { pc } = bundle
+      // Impolite peer (the deterministic initiator, lower id) wins glare;
+      // the polite peer rolls back. setRemoteDescription(offer) in have-local-
+      // offer state triggers the implicit rollback for us.
+      const myId = socket.id ?? ""
+      const polite = myId > from
 
-      if (signal.type === "offer") {
-        try {
-          console.log(`[VaporCall] Processing offer from ${from}`)
-          await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp as RTCSessionDescriptionInit))
+      try {
+        if (signal.type === "offer" || signal.type === "answer") {
+          const desc = signal.sdp as RTCSessionDescriptionInit
+          const offerCollision =
+            signal.type === "offer" &&
+            (bundle.makingOffer || pc.signalingState !== "stable")
 
+          bundle.ignoreOffer = !polite && offerCollision
+          if (bundle.ignoreOffer) return
+
+          await pc.setRemoteDescription(new RTCSessionDescription(desc))
+
+          // Flush any candidates that arrived before we had a remote description
           while (bundle.pendingCandidates.length > 0) {
             const cand = bundle.pendingCandidates.shift()
             if (cand) {
@@ -525,60 +686,33 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
             }
           }
 
-          // Ensure local audio track is attached before answering
-          const audioTrack = localStreamRef.current?.getAudioTracks()[0]
-          if (audioTrack) {
-            const senders = pc.getSenders()
-            const audioSender = senders.find((s) => !s.track || s.track.kind === "audio")
-            if (audioSender) {
-              void audioSender.replaceTrack(audioTrack).catch(() => {})
-            } else {
-              pc.addTrack(audioTrack, localStreamRef.current!)
+          if (signal.type === "offer") {
+            await pc.setLocalDescription()
+            if (pc.localDescription) {
+              socket.emit("call:signal", {
+                to: from,
+                signal: {
+                  type: "answer",
+                  sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp },
+                },
+              })
             }
           }
-
-          const answer = await pc.createAnswer()
-          await pc.setLocalDescription(answer)
-          socket.emit("call:signal", {
-            to: from,
-            signal: {
-              type: "answer",
-              sdp: { type: answer.type, sdp: answer.sdp },
-            },
-          })
-        } catch (err) {
-          console.error("[VaporCall] Error handling offer:", err)
-        }
-      } else if (signal.type === "answer") {
-        try {
-          console.log(`[VaporCall] Processing answer from ${from}`)
-          await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp as RTCSessionDescriptionInit))
-
-          while (bundle.pendingCandidates.length > 0) {
-            const cand = bundle.pendingCandidates.shift()
-            if (cand) {
-              try {
-                await pc.addIceCandidate(new RTCIceCandidate(cand))
-              } catch (e) {
-                console.warn("[VaporCall] Add queued candidate failed:", e)
-              }
+        } else if (signal.type === "candidate") {
+          const cand = signal.candidate as RTCIceCandidateInit
+          if (!cand || !cand.candidate) return
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand))
+            } catch (err) {
+              if (!bundle.ignoreOffer) console.warn("[VaporCall] Candidate error:", err)
             }
-          }
-        } catch (err) {
-          console.error("[VaporCall] Error handling answer:", err)
-        }
-      } else if (signal.type === "candidate") {
-        if (signal.candidate && signal.candidate.candidate) {
-          try {
-            if (pc.remoteDescription && pc.remoteDescription.type) {
-              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate as RTCIceCandidateInit))
-            } else {
-              bundle.pendingCandidates.push(signal.candidate as RTCIceCandidateInit)
-            }
-          } catch (err) {
-            console.warn("[VaporCall] Candidate handling error:", err)
+          } else {
+            bundle.pendingCandidates.push(cand)
           }
         }
+      } catch (err) {
+        console.error("[VaporCall] Error handling signal:", err)
       }
     }
 
@@ -597,30 +731,14 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
 
     const memberIds = new Set(callState.members.map((m) => m.peerId))
 
-    // Initiate offer to any other member if we are deterministic initiator (myId < otherId)
-    callState.members.forEach(async (member) => {
+    // Create a connection to any new member we're the initiator for (lower id).
+    // Adding our mic track fires onnegotiationneeded, which sends the offer —
+    // the higher-id peer creates its side lazily when that offer arrives.
+    callState.members.forEach((member) => {
       if (member.peerId === myId) return
-      if (!peersRef.current.has(member.peerId)) {
-        if (myId < member.peerId) {
-          console.log(`[VaporCall] Initiating offer to ${member.peerId}`)
-          const bundle = createPeerConnection(member.peerId)
-          try {
-            bundle.makingOffer = true
-            const offer = await bundle.pc.createOffer()
-            await bundle.pc.setLocalDescription(offer)
-            socket.emit("call:signal", {
-              to: member.peerId,
-              signal: {
-                type: "offer",
-                sdp: { type: offer.type, sdp: offer.sdp },
-              },
-            })
-          } catch (err) {
-            console.error(`[VaporCall] Failed to create offer for ${member.peerId}:`, err)
-          } finally {
-            bundle.makingOffer = false
-          }
-        }
+      if (!peersRef.current.has(member.peerId) && myId < member.peerId) {
+        console.log(`[VaporCall] Initiating connection to ${member.peerId}`)
+        createPeerConnection(member.peerId)
       }
     })
 
@@ -640,9 +758,25 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
           next.delete(peerId)
           return next
         })
+        setRemoteScreens((prev) => {
+          if (!prev.has(peerId)) return prev
+          const next = new Map(prev)
+          next.delete(peerId)
+          return next
+        })
       }
     })
   }, [callState.members, inCall, createPeerConnection])
+
+  // If someone else won the presenter slot while we were also trying to share,
+  // the server silently denied our claim — roll our local share back so we
+  // don't keep a dead screen feed flowing on the mesh.
+  useEffect(() => {
+    if (!isSharing) return
+    const myId = getSocket().id
+    const presenter = callState.members.find((m) => m.sharing)
+    if (presenter && presenter.peerId !== myId) stopShare()
+  }, [callState.members, isSharing, stopShare])
 
   // Global user gesture listener to unlock audio playback in restricted browsers
   useEffect(() => {
@@ -689,6 +823,11 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     speakingWhileMuted,
     pttEnabled,
     remoteStreams,
+    remoteScreens,
+    localScreenStream,
+    isSharing,
+    shareSupported:
+      typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia,
     speakingPeers,
     peerVolumes,
     callDuration,
@@ -698,6 +837,8 @@ export function useWebRTC(callState: CallState, roomOpen: boolean): WebRTCContro
     toggleMute,
     togglePtt,
     setPttPressed,
+    startShare,
+    stopShare,
     clearError,
   }
 }

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import type { CallState } from "@shared/protocol"
+import type { CallState, PeerInfo } from "@shared/protocol"
+import { LIMITS } from "@shared/protocol"
 import { Button } from "@/components/ui/button"
 import { AudioWaveform } from "./AudioWaveform"
 import type { WebRTCController } from "./useWebRTC"
@@ -11,6 +12,10 @@ interface CallDockProps {
   callState: CallState
   selfName: string
   selfId: string
+  /** everyone else in the room (seat presence) — the ring targets */
+  peers: PeerInfo[]
+  /** ring a room member (by seat id) to join the call */
+  onRing: (memberId: string) => void
 }
 
 function formatDuration(sec: number): string {
@@ -43,6 +48,51 @@ interface VoiceTileProps {
   isSpeaking: boolean
   isMuted: boolean
   volume: number
+  sharing?: boolean
+}
+
+/** Binds a MediaStream to a <video> and shows the live screen share. */
+function ScreenStage({
+  stream,
+  label,
+}: {
+  stream: MediaStream | null
+  label: string
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const v = videoRef.current
+    if (v && v.srcObject !== stream) v.srcObject = stream
+  }, [stream])
+
+  if (!stream) return null
+
+  return (
+    <div className="relative mt-3 overflow-hidden rounded-md border border-signal/30 bg-black">
+      {/* muted: a remote presenter's audio rides the peer's audio element, and
+          muting avoids hearing your own share back as an echo */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="max-h-[52vh] w-full bg-black object-contain"
+      />
+      <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-void/70 px-2 py-0.5 font-mono text-[10px] text-breath backdrop-blur">
+        <span className="h-1.5 w-1.5 rounded-full bg-signal" />
+        {label}
+      </div>
+      <button
+        type="button"
+        onClick={() => videoRef.current?.requestFullscreen().catch(() => {})}
+        title="Fullscreen"
+        className="absolute right-2 top-2 cursor-pointer rounded-sm border border-fog/30 bg-void/70 px-2 py-1 font-mono text-[10px] text-fog backdrop-blur transition-colors hover:text-breath hover:border-signal/50"
+      >
+        Fullscreen ⤢
+      </button>
+    </div>
+  )
 }
 
 /**
@@ -50,7 +100,7 @@ interface VoiceTileProps {
  * sound-reactive mint ring (the signature element) that tightens and glows
  * with live amplitude, a mute badge, and a name label with an equalizer.
  */
-function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume }: VoiceTileProps) {
+function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume, sharing }: VoiceTileProps) {
   // Ring intensity tracks live amplitude when speaking; muted stays dark.
   const ringAlpha = isMuted ? 0 : isSpeaking ? 0.5 + volume * 0.5 : 0.15
   const glow = isMuted ? 0 : isSpeaking ? 10 + volume * 26 : 0
@@ -74,6 +124,16 @@ function VoiceTile({ name, isSelf, isSpeaking, isMuted, volume }: VoiceTileProps
         >
           {initials(name)}
         </div>
+
+        {/* Sharing badge, top-left of avatar */}
+        {sharing && (
+          <span className="absolute -left-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-void bg-signal text-void">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path d="M8 21h8M12 17v4" />
+            </svg>
+          </span>
+        )}
 
         {/* Mute badge, bottom-right of avatar */}
         {isMuted && (
@@ -111,10 +171,28 @@ export function CallDock({
   callState,
   selfName,
   selfId,
+  peers,
+  onRing,
 }: CallDockProps) {
   const dockRef = useRef<HTMLDivElement>(null)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [pttHeld, setPttHeld] = useState(false)
+  // seat ids we've rung recently — disables the button through the cooldown
+  // so the UI never lets you spam a ring the server would drop anyway
+  const [cooling, setCooling] = useState<Set<string>>(new Set())
+
+  const ringPeer = (memberId: string) => {
+    if (cooling.has(memberId)) return
+    onRing(memberId)
+    setCooling((prev) => new Set(prev).add(memberId))
+    setTimeout(() => {
+      setCooling((prev) => {
+        const next = new Set(prev)
+        next.delete(memberId)
+        return next
+      })
+    }, LIMITS.CALL_RING_COOLDOWN_MS)
+  }
 
   useGSAP(
     () => {
@@ -148,10 +226,16 @@ export function CallDock({
     peerVolumes,
     callDuration,
     error,
+    isSharing,
+    shareSupported,
+    localScreenStream,
+    remoteScreens,
     leaveCall,
     toggleMute,
     togglePtt,
     setPttPressed,
+    startShare,
+    stopShare,
     clearError,
   } = rtc
 
@@ -188,6 +272,25 @@ export function CallDock({
   const isLocalSpeaking = speakingPeers.has("local")
 
   const remoteMembers = callState.members.filter((m) => m.peerId !== selfId)
+
+  // One presenter at a time (server-enforced). Resolve who it is and which
+  // stream to paint — our own local capture if it's us, else their feed.
+  const presenter = callState.members.find((m) => m.sharing)
+  const presenterIsSelf = presenter?.peerId === selfId
+  const presenterStream = presenter
+    ? presenterIsSelf
+      ? localScreenStream
+      : remoteScreens.get(presenter.peerId) ?? null
+    : null
+  const someoneElseSharing = !!presenter && !presenterIsSelf
+
+  // room members not yet in the call — the people we can ring in. Correlated
+  // by seat id (CallMember.memberId) so a shared display name never confuses
+  // who is already on the line. Away seats can't be rung (no live socket).
+  const inCallSeats = new Set(callState.members.map((m) => m.memberId))
+  const ringable = peers.filter(
+    (p) => p.status === "active" && !inCallSeats.has(p.id)
+  )
 
   // Find who is currently speaking among remote members (for the collapsed bar)
   const activeRemoteSpeaker = remoteMembers.find((m) => speakingPeers.has(m.peerId))
@@ -236,6 +339,22 @@ export function CallDock({
               <span className="font-mono text-[10px] text-fog-dim">
                 {callState.members.length} {callState.members.length === 1 ? "voice" : "voices"}
               </span>
+            )}
+            {presenter && (
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(false)}
+                title="Open the shared screen"
+                className="flex cursor-pointer items-center gap-1 rounded-full border border-signal/40 bg-signal/10 px-2 py-0.5 font-mono text-[10px] text-signal hover:bg-signal/20"
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8M12 17v4" />
+                </svg>
+                <span className="max-w-[90px] truncate">
+                  {presenterIsSelf ? "you're" : presenter.name} sharing
+                </span>
+              </button>
             )}
           </div>
 
@@ -291,7 +410,7 @@ export function CallDock({
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-signal" />
               </span>
               <span className="font-mono text-[9px] uppercase tracking-[0.25em] text-fog-dim font-medium">
-                Ephemeral Voice Call
+                on the line
               </span>
               <span className="font-mono text-xs text-signal font-semibold">
                 {formatDuration(callDuration)}
@@ -300,7 +419,7 @@ export function CallDock({
 
             <div className="flex items-center gap-2">
               <span className="font-mono text-[9px] tracking-wider text-fog-dim hidden sm:inline uppercase">
-                P2P · ZERO-STORAGE
+                nothing recorded
               </span>
 
               {/* Collapse into floating bar */}
@@ -334,16 +453,24 @@ export function CallDock({
             <div className="mt-2.5 flex items-center justify-between rounded-sm border border-ember/40 bg-ember/15 px-3 py-1.5 font-mono text-[11px] text-breath shadow-[0_0_16px_rgba(255,107,107,0.25)] animate-pulse">
               <div className="flex items-center gap-2">
                 <span className="text-ember font-bold">⚠️</span>
-                <span>You are speaking while muted</span>
+                <span>You&rsquo;re speaking while muted</span>
               </div>
               <button
                 type="button"
                 onClick={toggleMute}
                 className="ml-3 rounded bg-ember/30 px-2 py-0.5 text-[10px] font-medium text-breath hover:bg-ember/50 cursor-pointer transition-colors"
               >
-                Click to Unmute
+                Click to unmute
               </button>
             </div>
+          )}
+
+          {/* Shared screen, when someone is presenting */}
+          {presenter && presenterStream && (
+            <ScreenStage
+              stream={presenterStream}
+              label={presenterIsSelf ? "you're sharing" : `${presenter.name} is sharing`}
+            />
           )}
 
           {/* Participant grid: Discord-style sound-reactive avatar tiles */}
@@ -356,6 +483,7 @@ export function CallDock({
                 isSpeaking={isLocalSpeaking}
                 isMuted={isMuted}
                 volume={localVol}
+                sharing={isSharing}
               />
             </div>
 
@@ -367,10 +495,49 @@ export function CallDock({
                   isSpeaking={speakingPeers.has(m.peerId)}
                   isMuted={m.muted}
                   volume={peerVolumes.get(m.peerId) ?? 0}
+                  sharing={m.sharing}
                 />
               </div>
             ))}
           </div>
+
+          {/* Ring others in: room members not on the line yet. One chime per
+              person per cooldown — the button locks after you ring them. */}
+          {ringable.length > 0 && (
+            <div className="mt-3 rounded-sm border hairline bg-void/30 p-2.5">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-fog-dim">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                </svg>
+                <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-fog-dim font-medium">
+                  Ring to join
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {ringable.map((p) => {
+                  const isCooling = cooling.has(p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => ringPeer(p.id)}
+                      disabled={isCooling}
+                      title={isCooling ? `Already ringing ${p.name}` : `Ring ${p.name} to join the call`}
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors duration-200 ${
+                        isCooling
+                          ? "cursor-default border-fog/15 bg-void/40 text-fog-dim"
+                          : "cursor-pointer border-signal/40 bg-signal/10 text-signal hover:bg-signal/20 hover:border-signal/70"
+                      }`}
+                    >
+                      <span className="truncate max-w-[8rem]">{p.name}</span>
+                      <span className="text-[10px]">{isCooling ? "rung ✓" : "ring ↗"}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* In-Call Controls: centered round buttons, Discord-style, with a
               red hang-up as the clear primary exit. */}
@@ -425,6 +592,45 @@ export function CallDock({
                   <line x1="12" y1="18" x2="12" y2="22" />
                 </svg>
               </button>
+
+              {/* Screen share — one presenter at a time, so this locks out
+                  while someone else is already sharing */}
+              {(shareSupported || isSharing) && (
+                <button
+                  type="button"
+                  onClick={() => (isSharing ? stopShare() : startShare())}
+                  disabled={someoneElseSharing}
+                  className={`flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-signal/40 ${
+                    someoneElseSharing
+                      ? "cursor-not-allowed border-fog/15 bg-void/40 text-fog-dim"
+                      : isSharing
+                        ? "border-signal/50 bg-signal/15 text-signal hover:bg-signal/25"
+                        : "border-fog/25 bg-void/60 text-fog hover:border-signal/40 hover:text-signal"
+                  }`}
+                  title={
+                    someoneElseSharing
+                      ? `${presenter?.name ?? "Someone"} is already sharing`
+                      : isSharing
+                        ? "Stop sharing your screen"
+                        : "Share your screen"
+                  }
+                  aria-label={isSharing ? "Stop sharing your screen" : "Share your screen"}
+                  aria-pressed={isSharing}
+                >
+                  {isSharing ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <path d="M8 21h8M12 17v4" />
+                      <line x1="2" y1="2" x2="22" y2="22" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <path d="M8 21h8M12 17v4" />
+                    </svg>
+                  )}
+                </button>
+              )}
 
               {/* Red hang-up — the clear way out */}
               <button

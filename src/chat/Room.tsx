@@ -148,16 +148,29 @@ export function Room({ session }: { session: ChatSession }) {
     otherCallMembers.length > 0 &&
     dismissedCallKey !== activeCallKey
 
-  const incomingCaller = otherCallMembers[0]
+  // An explicit ring overrides a prior dismissal — someone deliberately
+  // summoned us, so the modal reappears even if we'd waved off the auto-alert.
+  const ring = session.incomingRing
+  const showCallModal = !rtc.inCall && (showIncomingCall || ring !== null)
+  const callerName = ring?.from ?? otherCallMembers[0]?.name ?? "Someone"
+
+  const clearRing = session.clearRing
+
+  // Once we're actually in the call, no ring is still pending for us
+  useEffect(() => {
+    if (rtc.inCall && ring) clearRing()
+  }, [rtc.inCall, ring, clearRing])
 
   const onAcceptIncomingCall = useCallback(() => {
     setDismissedCallKey(null)
+    clearRing()
     void rtc.startCall()
-  }, [rtc])
+  }, [rtc, clearRing])
 
   const onDeclineIncomingCall = useCallback(() => {
     setDismissedCallKey(activeCallKey)
-  }, [activeCallKey])
+    clearRing()
+  }, [activeCallKey, clearRing])
 
   // Wrap leaveCall to immediately register call dismissal and prevent any auto-ring loop
   const onLeaveCall = useCallback(() => {
@@ -217,6 +230,8 @@ export function Room({ session }: { session: ChatSession }) {
           callState={session.callState}
           selfName={room.name}
           selfId={rtc.selfId}
+          peers={session.peers}
+          onRing={session.ringMember}
         />
       )}
 
@@ -282,9 +297,9 @@ export function Room({ session }: { session: ChatSession }) {
         <SharePanel room={room} onClose={closeShare} />
       )}
 
-      {showIncomingCall && incomingCaller && (
+      {showCallModal && (
         <IncomingCallModal
-          callerName={incomingCaller.name}
+          callerName={callerName}
           onAccept={onAcceptIncomingCall}
           onDecline={onDeclineIncomingCall}
         />

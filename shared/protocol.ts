@@ -32,6 +32,8 @@ export const LIMITS = {
   REMATCH_BLOCK_MS: 10 * 60_000,
   /** client-side: a typing signal goes stale after this long */
   TYPING_TTL_MS: 3000,
+  /** a given person can be rung into a call at most once per this window */
+  CALL_RING_COOLDOWN_MS: 20_000,
 } as const
 
 export type RoomKind = "stranger" | "public" | "private" | "private-group"
@@ -178,8 +180,14 @@ export interface AppError {
 /** Ephemeral voice call types — WebRTC P2P audio mesh */
 export interface CallMember {
   peerId: string
+  /** the member's stable seat id — lets the client correlate a call voice
+      with its room seat (so it knows who in the room is NOT in the call) */
+  memberId: string
   name: string
   muted: boolean
+  /** true while this member is presenting their screen — one presenter at a
+      time across the call, enforced server-side */
+  sharing: boolean
 }
 
 export interface CallState {
@@ -234,8 +242,13 @@ export interface ClientToServer {
   /** ephemeral voice call actions */
   "call:join": (p?: { mode?: string }) => void
   "call:leave": () => void
-  "call:state_update": (p: { muted: boolean }) => void
+  /** update your own call state — mute and/or screen-share claim. A
+      sharing:true claim is denied if someone else is already presenting. */
+  "call:state_update": (p: { muted?: boolean; sharing?: boolean }) => void
   "call:signal": (p: { to: string; signal: CallSignal }) => void
+  /** ring a specific room member (by seat id) to join the active call —
+      only callers already in the call may send; the server rate-limits it */
+  "call:ring": (p: { to: string }) => void
 }
 
 /** server → client */
@@ -269,5 +282,7 @@ export interface ServerToClient {
   /** ephemeral call state & signaling */
   "call:state": (p: CallState) => void
   "call:signal": (p: { from: string; signal: CallSignal }) => void
+  /** someone in the call is ringing you to join it — `from` names the caller */
+  "call:ringing": (p: { from: string }) => void
 }
 

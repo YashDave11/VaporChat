@@ -11,10 +11,8 @@ interface IncomingCallModalProps {
 }
 
 /**
- * Incoming voice call alert modal.
- * Pops up when another user in the room initiates an ephemeral voice call.
- * Features Vapor's signature frosted glass, pulsing signal ring, chime playback,
- * and clear accept / decline actions.
+ * The incoming-call modal: pops up when someone in the room starts a call.
+ * Frosted veil, a pulsing ring, a repeating chime, accept or decline.
  */
 export function IncomingCallModal({
   callerName,
@@ -100,12 +98,12 @@ export function IncomingCallModal({
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-signal" />
             </span>
             <span className="font-mono text-[9px] uppercase tracking-[0.25em] text-signal font-medium">
-              Incoming Voice Call
+              Incoming call
             </span>
           </div>
 
           <span className="font-mono text-[9px] tracking-wider text-fog-dim uppercase">
-            P2P · ZERO-STORAGE
+            nothing recorded
           </span>
         </div>
 
@@ -134,7 +132,7 @@ export function IncomingCallModal({
           </p>
 
           <p className="mt-1.5 font-mono text-[10px] text-fog-dim">
-            Direct end-to-end voice stream · unrecorded & ephemeral
+            voice only, and only while you&rsquo;re here
           </p>
         </div>
 
@@ -151,7 +149,7 @@ export function IncomingCallModal({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
             </svg>
-            <span>Join Call ↗</span>
+            <span>Join call ↗</span>
           </Button>
 
           {/* Decline button */}

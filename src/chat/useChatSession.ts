@@ -70,6 +70,8 @@ interface State {
   /** set while the transcript evaporates, before the Ended screen commits */
   dissolving: { reason: string; cause: EndCause; by?: string } | null
   callState: CallState
+  /** a caller is ringing us to join the active call — their name, or null */
+  incomingRing: { from: string } | null
 }
 
 type Action =
@@ -94,6 +96,8 @@ type Action =
   | { type: "error"; error: AppError }
   | { type: "clear_error" }
   | { type: "call_state"; callState: CallState }
+  | { type: "ringing"; from: string }
+  | { type: "clear_ring" }
   | { type: "left" }
 
 const initial: State = {
@@ -107,6 +111,7 @@ const initial: State = {
   error: null,
   dissolving: null,
   callState: { active: false, members: [] },
+  incomingRing: null,
 }
 
 const searchingAgain = (note: string | null): Stage => ({
@@ -218,6 +223,7 @@ function reducer(state: State, action: Action): State {
         peers: action.room.peers,
         typing: [],
         error: null,
+        incomingRing: null,
       }
     case "line":
       return { ...state, lines: [...state.lines, action.line] }
@@ -284,6 +290,7 @@ function reducer(state: State, action: Action): State {
         typing: [],
         dissolving: null,
         callState: { active: false, members: [] },
+        incomingRing: null,
       }
     }
     case "error":
@@ -291,7 +298,16 @@ function reducer(state: State, action: Action): State {
     case "clear_error":
       return { ...state, error: null }
     case "call_state":
-      return { ...state, callState: action.callState }
+      // a call that just emptied can no longer be ringing anyone
+      return {
+        ...state,
+        callState: action.callState,
+        incomingRing: action.callState.active ? state.incomingRing : null,
+      }
+    case "ringing":
+      return { ...state, incomingRing: { from: action.from } }
+    case "clear_ring":
+      return { ...state, incomingRing: null }
     case "left":
       return { ...initial, name: state.name, directory: state.directory }
     default:
@@ -406,6 +422,10 @@ export function useChatSession() {
     const onCallState = (callState: CallState) => {
       dispatch({ type: "call_state", callState })
     }
+    const onRinging = (p: { from: string }) => {
+      // the chime is owned by the modal; here we just surface the ring
+      dispatch({ type: "ringing", from: p.from })
+    }
     const onError = (e: AppError) => {
       // a failed resume just means the room is gone — arrive at the gate quietly
       if (e.code === "ROOM_GONE" && resumingRef.current) {
@@ -452,6 +472,7 @@ export function useChatSession() {
     socket.on("invite:dead", onInviteDead)
     socket.on("room:ended", onEnded)
     socket.on("call:state", onCallState)
+    socket.on("call:ringing", onRinging)
     socket.on("app:error", onError)
     socket.io.on("reconnect", tryResume)
 
@@ -499,6 +520,7 @@ export function useChatSession() {
       socket.off("invite:dead", onInviteDead)
       socket.off("room:ended", onEnded)
       socket.off("call:state", onCallState)
+      socket.off("call:ringing", onRinging)
       socket.off("app:error", onError)
       socket.io.off("reconnect", tryResume)
       for (const t of timers.values()) clearTimeout(t)
@@ -597,6 +619,13 @@ export function useChatSession() {
     dispatch({ type: "left" })
   }, [])
   const clearError = useCallback(() => dispatch({ type: "clear_error" }), [])
+  /** ring a room member (by seat id) into the active call */
+  const ringMember = useCallback(
+    (to: string) => getSocket().emit("call:ring", { to }),
+    []
+  )
+  /** dismiss an incoming ring without answering */
+  const clearRing = useCallback(() => dispatch({ type: "clear_ring" }), [])
   /** the transcript finished evaporating — commit the Ended screen */
   const finishDissolve = useCallback(() => dispatch({ type: "ended" }), [])
 
@@ -617,6 +646,8 @@ export function useChatSession() {
     vaporize,
     backToGate,
     clearError,
+    ringMember,
+    clearRing,
     finishDissolve,
   }
 }

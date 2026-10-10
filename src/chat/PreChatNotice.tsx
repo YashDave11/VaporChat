@@ -29,7 +29,7 @@ const SIGNALS: { tag: string; name: string; desc: string }[] = [
   {
     tag: "SIG·02",
     name: "Nothing is stored",
-    desc: "Messages exist only in the memory of the people in the room. No chat logs are kept, nothing is used for advertising, and nothing is sold or shared — beyond the technical infrastructure that relays it in the moment.",
+    desc: "Messages live only in the memory of the people in the room. We keep no logs, we don't feed them to advertisers, and we sell them to no one. The servers that relay them hold nothing once the moment passes.",
   },
   {
     tag: "SIG·03",
@@ -101,8 +101,8 @@ export function PreChatNotice({
         Before you step in
       </h1>
       <p data-notice-item className="mt-3 text-fog">
-        Vapor is anonymous, unrecorded conversation. That comes with rules of
-        physics. Thirty seconds of reading, then it&rsquo;s yours.
+        Vapor is anonymous, unrecorded conversation. A few hard limits come
+        with that. Thirty seconds of reading, then it&rsquo;s yours.
       </p>
 
       <ul data-notice-item className="mt-10 border-t hairline" role="list">
