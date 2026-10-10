@@ -70,8 +70,13 @@ const io = new Server<ClientToServer, ServerToClient>(httpServer, {
   cors: corsOrigin
     ? { origin: corsOrigin, credentials: false }
     : { origin: false },
-  // small frames only; we're a text chat, not a file drop
-  maxHttpBufferSize: 4096,
+  // Frames must fit the largest thing we send: a WebRTC screen-share offer
+  // SDP (audio + video m-lines) runs several KB — well past a voice-only
+  // offer. Too small a cap makes Socket.IO drop the connection mid-signal,
+  // which looked like "starting a screen share disconnects you". 64KB holds
+  // any SDP with room to spare, still far under Socket.IO's 1MB default and
+  // bounded against abuse (chat text is separately capped at 500 chars).
+  maxHttpBufferSize: 65536,
   // tighter heartbeat: detect dead sockets in ~25s instead of ~45s
   pingInterval: 10000,
   pingTimeout: 15000,
