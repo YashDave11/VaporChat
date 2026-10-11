@@ -55,6 +55,7 @@ a room, the garbage collector is the delete button.
 | 🎲 **Find a stranger** | Anonymous 1v1 matchmaking with a mutual-consent handshake — the room only opens if you *both* say yes. Declined pairs won't be shown to each other again for 10 minutes. |
 | 📡 **Open rooms** | A live directory of discoverable group rooms, up to 10 voices each. Join a conversation already in the air. |
 | 🎙️ **Ephemeral voice** | Peer-to-peer WebRTC voice calls in any room — sound-reactive avatar tiles, speaking rings, push-to-talk, and mute. Audio flows directly between browsers; the server only relays the handshake and stores nothing. |
+| 🖥️ **Screen sharing** | Present your screen into any voice call — one presenter at a time, riding the same P2P mesh as the audio. The server never sees the pixels. Mobile viewers get the share fit to its real aspect ratio, so a portrait screen isn't cropped into a sliver. |
 | 🔑 **Private rooms** | Keyed 1v1 or group rooms — invisible to the directory, joinable only by a 4-character key or an invite link. |
 | 💨 **Vaporize** | One exit button. In a 1v1 it ends the room for both sides; in a group it just takes you out. |
 | ↩️ **Quoted replies** | Replies carry their own excerpt over the wire — the server stores nothing, so the quote *is* the context. |
@@ -116,7 +117,8 @@ presence, and echoes your own messages back to you so there is exactly one rende
 channel (a deterministic `myId < peerId` rule picks who sends the offer, avoiding glare).
 The server only relays the SDP/ICE handshake between participants — the audio itself never
 touches it. Google STUN covers most NATs out of the box; a TURN relay can be supplied by env
-for symmetric-NAT fallback.
+for symmetric-NAT fallback. Screen sharing rides the same mesh as a video track — the server
+gates the `sharing` claim to one presenter at a time but never sees the frames.
 
 **Four room kinds, four rule sets:**
 
